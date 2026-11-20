@@ -186,6 +186,46 @@ test('week rollover, simulation, sync idempotency, chat', () => {
   assert.equal(s.dayOffset, before + 1);
 });
 
+test('clan levels gate vigils; new clans start at Lv 1', () => {
+  const s = fresh();
+  G.foundClan(s, { name: 'New Clan' }, WED);
+  const clan = G.playerClan(s);
+  assert.equal(G.clanLevel(clan).level, 1);
+  goTo(s, 'seward-park');
+  assert.throws(() => G.establish(s, 'seward-park', WED), /Level 3/);
+  clan.xp = 650;
+  assert.equal(G.clanLevel(clan).level, 3);
+  G.establish(s, 'seward-park', WED);
+  assert.equal(s.vigils['seward-park'].holder, clan.id);
+  const before = clan.xp;
+  G.logActivity(s, { type: 'walk', minutes: 30, distanceKm: 3 }, WED);
+  assert.equal(r(clan.xp - before), 3);
+});
+
+test('gatherings: seeded, RSVP, check in on the day at the spot, host at Lv 2', () => {
+  const s = fresh();
+  G.joinClan(s, 'cascade', WED);
+  assert.ok(s.gatherings.length >= s.clans.length, 'every clan hosts');
+  const g = s.gatherings.find((x) => x.clanId === 'emerald');
+  G.rsvp(s, g.id, WED);
+  assert.ok(g.going.includes('me'));
+  g.day = G.dayKey(WED);
+  const spot = G.spotById(g.spotId);
+  s.player.pos = { lat: 47.70, lon: -122.30 };
+  assert.throws(() => G.attendGathering(s, g.id, WED), /within/);
+  s.player.pos = { lat: spot.lat, lon: spot.lon };
+  assert.throws(() => G.attendGathering(s, g.id, WED), /Move first/);
+  G.logActivity(s, { type: 'sport', minutes: 45 }, WED);
+  const em = G.clanById(s, 'emerald').xp, mine = G.playerClan(s).xp, lum = s.lumens;
+  G.attendGathering(s, g.id, WED);
+  assert.ok(G.clanById(s, 'emerald').xp > em && G.playerClan(s).xp > mine && s.lumens > lum);
+  assert.ok(s.badges.includes('gatherer'));
+  const ev = G.hostGathering(s, { type: 'run', spotId: 'green-lake', when: 'tomorrow', time: '07:00' }, WED);
+  assert.equal(ev[0].g.clanId, 'cascade');
+  G.foundClan(s, { name: 'Tiny' }, WED);
+  assert.throws(() => G.hostGathering(s, { type: 'run', spotId: 'green-lake' }, WED), /Level 2/);
+});
+
 test('journeys are well formed', () => {
   for (const j of EXPEDITIONS) {
     assert.equal(j.waypoints[0].km, 0);

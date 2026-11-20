@@ -100,6 +100,40 @@ export const POWERS = {
 };
 // Every awakened Power also empowers the clan's vigils: half decay and ×1.5 tribute.
 
+// ---------- Clan levels ----------
+// Clan XP = trail km moved by members + 150 per Awakening + 20 per gathering attended.
+export const CLAN_LEVELS = [
+  { level: 1, name: 'Campfire',   xp: 0,    unlock: 'Clan chat, weekly Awakening, join gatherings' },
+  { level: 2, name: 'Hearth',     xp: 250,  unlock: 'Host gatherings on the map' },
+  { level: 3, name: 'Outpost',    xp: 600,  unlock: 'Raise and contest vigils on landmarks' },
+  { level: 4, name: 'Stronghold', xp: 1200, unlock: '+1 extra Vigil Seal per Awakening' },
+  { level: 5, name: 'Citadel',    xp: 2200, unlock: 'Your vigils fade 25% slower' },
+];
+export const VIGIL_MIN_LEVEL = 3;
+export const HOST_MIN_LEVEL = 2;
+
+// ---------- Gatherings: clan activities happening around the city ----------
+export const SPOTS = [
+  { id: 'gas-works', name: 'Gas Works Park', lat: 47.6456, lon: -122.3344 },
+  { id: 'green-lake', name: 'Green Lake', lat: 47.6812, lon: -122.3355 },
+  { id: 'magnuson', name: 'Magnuson Park fields', lat: 47.6815, lon: -122.2560 },
+  { id: 'cal-anderson', name: 'Cal Anderson Park', lat: 47.6173, lon: -122.3191 },
+  { id: 'volunteer-park', name: 'Volunteer Park', lat: 47.6304, lon: -122.3150 },
+  { id: 'kerry-park', name: 'Kerry Park', lat: 47.6295, lon: -122.3599 },
+  { id: 'west-point', name: 'Discovery Park', lat: 47.6575, lon: -122.4090 },
+  { id: 'alki', name: 'Alki Beach', lat: 47.5770, lon: -122.4035 },
+  { id: 'fremont', name: 'Fremont Canal', lat: 47.6505, lon: -122.3500 },
+  { id: 'seward-park', name: 'Seward Park', lat: 47.5520, lon: -122.2575 },
+];
+export const GATHERING_TEMPLATES = {
+  ironroot:   [['Outdoor strength circuit', 'strength', 'gas-works', '07:00'], ['Stairs & calisthenics', 'strength', 'volunteer-park', '18:00']],
+  emberclaw:  [['Pickup soccer', 'sport', 'magnuson', '10:00'], ['Bootcamp HIIT', 'hiit', 'cal-anderson', '18:30']],
+  tidecaller: [['Park yoga', 'yoga', 'volunteer-park', '08:30'], ['Cold-water swim', 'swim', 'alki', '07:30'], ['Sunset paddle', 'paddle', 'fremont', '18:00']],
+  galewing:   [['Green Lake loop run', 'run', 'green-lake', '07:00'], ['Burke-Gilman ride', 'cycle', 'fremont', '09:00']],
+  mistwalker: [['Discovery Park loop walk', 'walk', 'west-point', '09:30'], ['Viewpoints walk', 'walk', 'kerry-park', '17:30'], ['Old-growth forest walk', 'hike', 'seward-park', '10:00']],
+};
+export const GATHERING = { radiusM: 200, essence: 40, lumens: 15, clanXp: 20 };
+
 // ---------- Vigils: hold real Seattle landmarks ----------
 // A clan holds a vigil until a rival breaks its ward. Holding pays daily tribute (✦ Lumens) to every member
 // and grants a clan-wide boon.
@@ -229,21 +263,22 @@ export const BADGES = {
   warden:      { name: 'Warden',          icon: '🔱', desc: 'Help your clan claim a vigil.',          gear: 'Warden\'s Crest' },
   awakened:    { name: 'Spirit Awakened', icon: '✨', desc: 'Evolve your spirit to its second form.', gear: 'Bigger spirit companion' },
   century:     { name: 'Hundred Miles',   icon: '🧭', desc: 'Contribute 100 trail miles.',           gear: 'Explorer\'s Pack' },
+  gatherer:    { name: 'Gatherer',        icon: '🤝', desc: 'Show up to a gathering in person.',       gear: 'Gatherer\'s Scarf' },
   awakener:    { name: 'Awakener',        icon: '⚡', desc: 'Be Bonded when your clan awakens.',      gear: 'Awakener\'s Halo' },
 };
 
 // ---------- Seed clans (simulated members: [name, primary aspect, propensity]) ----------
 
 export const SEED_CLANS = [
-  { id: 'cascade', name: 'Cascade Ironroots', aspect: 'ironroot', motto: 'We carry the mountain.', seals: 1, members: [
+  { id: 'cascade', hub: { name: 'Ballard', lat: 47.6685, lon: -122.3845 }, xp: 720, name: 'Cascade Ironroots', aspect: 'ironroot', motto: 'We carry the mountain.', seals: 1, members: [
     ['Asha', 'ironroot', 0.8], ['Mateo', 'emberclaw', 0.7], ['Ingrid', 'ironroot', 0.55], ['Kofi', 'tidecaller', 0.4], ['Lin', 'mistwalker', 0.3]] },
-  { id: 'emerald', name: 'Emerald Embers', aspect: 'emberclaw', motto: 'Burn bright in the rain.', seals: 1, members: [
+  { id: 'emerald', hub: { name: 'Capitol Hill', lat: 47.6215, lon: -122.3200 }, xp: 980, name: 'Emerald Embers', aspect: 'emberclaw', motto: 'Burn bright in the rain.', seals: 1, members: [
     ['Ravi', 'emberclaw', 0.75], ['Sofia', 'emberclaw', 0.6], ['Jonah', 'ironroot', 0.5], ['Amara', 'galewing', 0.45], ['Yuki', 'tidecaller', 0.35]] },
-  { id: 'sound', name: 'Sound Tidecallers', aspect: 'tidecaller', motto: 'Flow around every obstacle.', seals: 1, members: [
+  { id: 'sound', hub: { name: 'West Seattle', lat: 47.5700, lon: -122.3870 }, xp: 640, name: 'Sound Tidecallers', aspect: 'tidecaller', motto: 'Flow around every obstacle.', seals: 1, members: [
     ['Maya', 'tidecaller', 0.8], ['Tomás', 'tidecaller', 0.55], ['Elif', 'galewing', 0.5], ['Noah', 'ironroot', 0.45], ['Priya', 'emberclaw', 0.4]] },
-  { id: 'rainier', name: 'Rainier Galewings', aspect: 'galewing', motto: 'Lighter with every mile.', seals: 1, members: [
+  { id: 'rainier', hub: { name: 'Roosevelt', lat: 47.6760, lon: -122.3170 }, xp: 1300, name: 'Rainier Galewings', aspect: 'galewing', motto: 'Lighter with every mile.', seals: 1, members: [
     ['Leo', 'galewing', 0.7], ['Zara', 'galewing', 0.65], ['Kai', 'emberclaw', 0.5], ['Nadia', 'mistwalker', 0.4], ['Femi', 'ironroot', 0.35]] },
-  { id: 'lantern', name: 'Fog Lantern Society', aspect: 'mistwalker', motto: 'Every street has a story.', seals: 1, members: [
+  { id: 'lantern', hub: { name: 'Queen Anne', lat: 47.6370, lon: -122.3570 }, xp: 660, name: 'Fog Lantern Society', aspect: 'mistwalker', motto: 'Every street has a story.', seals: 1, members: [
     ['Wren', 'mistwalker', 0.75], ['Osei', 'mistwalker', 0.6], ['Hana', 'tidecaller', 0.5], ['Diego', 'galewing', 0.45], ['Mira', 'ironroot', 0.35]] },
 ];
 

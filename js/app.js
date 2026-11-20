@@ -1,5 +1,6 @@
 // Wildbound — UI layer (vanilla JS modules, no build step).
-import { ASPECTS, ASPECT_IDS, AFFINITY, ACTIVITIES, INTENSITY, EXPEDITIONS, BADGES, AWAKENING, POWERS, VIGIL, VIGILS, SHOP, HOME } from './data.js';
+import { ASPECTS, ASPECT_IDS, AFFINITY, ACTIVITIES, INTENSITY, EXPEDITIONS, BADGES, AWAKENING, POWERS, VIGIL, VIGILS, SHOP, HOME, CLAN_LEVELS, VIGIL_MIN_LEVEL, HOST_MIN_LEVEL, SPOTS, GATHERING } from './data.js';
+import { haversineM } from './geo.js';
 import * as G from './engine.js';
 import * as store from './store.js';
 import { SOURCES, fetchRecent } from './sync.js';
@@ -12,7 +13,6 @@ let state = store.load();
 let tab = 'map';
 let ranksTab = 'clans';
 let onboard = { primary: null, secondary: null };
-let selectedVigil = null;
 let map = null, mapFailed = false, gmap = null;
 const freshDraft = () => ({ type: null, when: 'today', minutes: 30, distance: '', steps: '', elev: '', intensity: 'moderate', place: '', note: '' });
 let draft = freshDraft();
@@ -89,6 +89,9 @@ function announce(events) {
       case 'imported': P(2, e.count ? `${SOURCES[e.source].name}: imported ${e.count} activit${e.count === 1 ? 'y' : 'ies'}` : `${SOURCES[e.source].name}: up to date`, 'good'); break;
       case 'rally': P(2, '🔥 Rally sent. Sleepy kin are more likely to move today.'); break;
       case 'cheer': P(3, `👏 +${e.amt} essence for cheering`); break;
+      case 'rsvp': P(2, e.g.rsvp ? `📅 You're going to <b>${esc(e.g.title)}</b>` : 'RSVP removed'); break;
+      case 'attended': P(0, `🤝 Checked in at <b>${esc(e.g.title)}</b>: +${GATHERING.essence} essence, +${GATHERING.lumens} ✦, +${GATHERING.clanXp} clan XP`, 'epic'); break;
+      case 'hosted': P(0, `📍 <b>${esc(e.g.title)}</b> is on the map. Your kin have been told.`, 'good'); break;
     }
   }
   if (lore.length) out.push([1, lore.length === 1 ? `📜 Lore unlocked: <b>${esc(lore[0])}</b>` : `📜 ${lore.length} lore entries unlocked`, 'lore']);
@@ -133,31 +136,24 @@ function aspectCard(a, picked, attr) {
     <div class="element-motto">${a.motto}</div>
     <div class="element-spirit">${a.domain} · ${a.spirit.name}, the ${a.spirit.kind}</div>
     <div class="affinity">${acts}</div>
-    <div class="power-hint">${POWERS[a.id].icon} Clan power: <b>${POWERS[a.id].name}</b></div>
   </button>`;
 }
 function onboardingView() {
   return `
-  <section class="hero">
-    <div class="eyebrow">Seattle · season one</div>
-    <h1>Move together.<br/>Hold the city.</h1>
-    <p class="lead">Every walk, lift, match and swim charges your spirit and your clan. When enough of your kin move, the clan <b>awakens</b> and earns Seals to raise <b>vigils</b> on real Seattle landmarks: the Space Needle, Pike Place, Gas Works and more. Vigils pay your whole clan tribute every day, until a rival clan moves more and breaks them.</p>
+  <section class="hero compact">
+    <div class="eyebrow">Wildbound · ${esc(HOME.city)}</div>
+    <h1>Move together.</h1>
+    <p class="lead">Pick the spirit that matches how you move. Next, you'll find clans and gatherings near you on the map.</p>
   </section>
   <section class="card">
-    <h2>1 · Your primary Aspect</h2>
-    <p class="muted">Your spirit grows ×${AFFINITY.primary} from these movements. Every kind of movement still counts for your clan, whatever its Aspect.</p>
+    <h2>Your primary Aspect</h2>
+    <p class="muted small">Your spirit grows ×${AFFINITY.primary} from these. Everything you do still counts for your clan.</p>
     <div class="element-grid">${Object.values(ASPECTS).map((a) => aspectCard(a, onboard.primary === a.id, 'data-primary')).join('')}</div>
-  </section>
-  <section class="card">
-    <h2>2 · Also into… <small class="muted">(optional secondary Aspect, ×${AFFINITY.secondary})</small></h2>
-    <p class="muted">Gym and soccer? Pick Ironroot first and Emberclaw here. Both feed your spirit, and both charge your clan.</p>
+    <h3>Also into… <small class="muted">(optional, ×${AFFINITY.secondary})</small></h3>
     <div class="chips aspect-chips">${Object.values(ASPECTS).map((a) => `<button class="chip ${onboard.secondary === a.id ? 'on' : ''}" data-secondary="${a.id}" ${onboard.primary === a.id ? 'disabled' : ''} style="--c:${a.color}">${a.spirit.glyph} ${a.name} <small>${a.domain}</small></button>`).join('')}</div>
-  </section>
-  <section class="card">
-    <h2>3 · Name your wanderer</h2>
-    <form id="onboard-form" class="row">
+    <form id="onboard-form" class="row onboard-name">
       <input id="pname" maxlength="24" placeholder="Your trail name" autocomplete="nickname" required />
-      <button class="btn primary" type="submit">Bind my spirit →</button>
+      <button class="btn primary" type="submit">Find clans near me →</button>
     </form>
     <p id="onboard-err" class="err"></p>
   </section>`;
@@ -171,10 +167,10 @@ function bindOnboarding() {
     if (!onboard.primary) { $('#onboard-err').textContent = 'Choose a primary Aspect first.'; return; }
     G.createPlayer(state, { name: $('#pname').value, ...onboard });
     state.player.avatar = { outfit: OUTFITS[hash(state.player.name) % OUTFITS.length], skin: SKINS[1] };
-    tab = 'clan';
+    tab = 'map'; mapLayer = 'clans'; sel = null;
     commit();
     const sp = aspectOf(onboard.primary).spirit;
-    toast(`${sp.glyph} ${sp.name} has bound to you. Now find your clan.`, 'epic');
+    toast(`${sp.glyph} ${sp.name} has bound to you. Tap a clan Hearth to meet them.`, 'epic');
   });
 }
 
@@ -200,7 +196,9 @@ const daysLeft = () => 6 - G.weekdayIdx(now());
 function clanColor(clan) { return clan ? aspectOf(clan.aspect).color : null; }
 function wardBar(ward, color) { return `<span class="ward"><i style="width:${Math.round((ward / VIGIL.maxWard) * 100)}%;background:${color || 'var(--muted)'}"></i></span>`; }
 
-// ---------- MAP ----------
+// ---------- MAP (clans · gatherings · vigils) ----------
+let mapLayer = 'clans';
+let sel = null; // { kind: 'clan' | 'gathering' | 'vigil', id }
 const tracker = createTracker({
   onFix: (p) => { state.player.pos = { lat: p.lat, lon: p.lon }; map?.setPlayer(p.lat, p.lon); gmap?.setPlayer(p.lat, p.lon); onPositionChanged(); },
   onPoints: (pts) => { map?.setTrack(pts); gmap?.setTrack(pts); updateTrekBar(); },
@@ -211,9 +209,13 @@ function onPositionChanged() {
   const ev = G.visitIfNear(state);
   if (ev.length) announce(ev);
   if (Date.now() - lastSave > 2000) { save(); lastSave = Date.now(); }
-  renderVigilPanel();
-  renderVigilList();
+  renderPanel();
+  renderList();
 }
+const metersTo = (p) => haversineM(state.player.pos, p);
+const upcoming = () => (state.gatherings || []).filter((g) => g.day >= G.dayKey(now()));
+const gDay = (g) => G.fmtGDay(g.day, now());
+const matchesMe = (type) => [state.player.primary, state.player.secondary].includes(ACTIVITIES[type].aspect);
 function vigilModel() {
   const mine = state.clanId;
   return VIGILS.map((site) => {
@@ -221,7 +223,7 @@ function vigilModel() {
     const color = clanColor(vs.holderClan);
     return {
       id: site.id, lat: site.lat, lon: site.lon, ward: vs.ward, color, mine: vs.holder === mine && !!mine,
-      shielded: !!vs.shieldUntil && G.dayKey(now()) <= vs.shieldUntil, selected: selectedVigil === site.id,
+      shielded: !!vs.shieldUntil && G.dayKey(now()) <= vs.shieldUntil, selected: sel?.kind === 'vigil' && sel.id === site.id,
       label: vs.holderClan ? `${site.name} · ${vs.holderClan.name}` : `${site.name} · open`,
     };
   });
@@ -233,18 +235,31 @@ function mapModel() {
   const aura = SHOP.find((i) => i.id === state.inventory.aura);
   return {
     vigils: vigilModel(),
+    showVigils: mapLayer === 'vigils',
+    hubs: state.clans.map((c) => ({ id: c.id, name: c.name, lat: c.hub.lat, lon: c.hub.lon, color: clanColor(c), glyph: aspectOf(c.aspect).spirit.glyph, level: G.clanLevel(c).level, mine: c.id === state.clanId, selected: sel?.kind === 'clan' && sel.id === c.id })),
+    gatherings: upcoming().slice(0, 14).map((g) => { const sp = G.spotById(g.spotId); return { id: g.id, spotId: g.spotId, lat: sp.lat, lon: sp.lon, icon: ACTIVITIES[g.type].icon, when: `${gDay(g)} ${g.time}`, color: clanColor(G.clanById(state, g.clanId)), going: g.rsvp, highlight: matchesMe(g.type) }; }),
     avatar: { color: av.outfit || OUTFITS[0], skin: av.skin || SKINS[1], gear: state.badges, aspectColor: clan ? clanColor(clan) : a.color },
     spirit: { aspect: state.player.primary, color: a.color, stage: G.spiritProgress(G.totalEssence(state)).stage, aura: aura?.color || null },
   };
 }
+function defaultSel() {
+  if (sel) return sel;
+  if (mapLayer === 'clans') {
+    const c = [...state.clans].sort((x, y) => (y.aspect === state.player.primary) - (x.aspect === state.player.primary) || metersTo(x.hub) - metersTo(y.hub))[0];
+    return { kind: 'clan', id: (G.playerClan(state) || c).id };
+  }
+  if (mapLayer === 'gatherings') { const g = upcoming()[0]; return g ? { kind: 'gathering', id: g.id } : null; }
+  return { kind: 'vigil', id: G.nearestVigil(state).site.id };
+}
 function mapView() {
   const live = tracker.mode === 'gps';
+  const clan = G.playerClan(state);
+  const layer = (id, label, n) => `<button class="${mapLayer === id ? 'active' : ''}" data-layer="${id}">${label}${n != null ? ` <small>${n}</small>` : ''}</button>`;
   return `
+  ${clan ? '' : '<section class="card intro-strip"><b>Find your people.</b> Each glowing Hearth is a clan\'s home base. Tap one to meet them, or browse gatherings happening nearby.</section>'}
   <section class="world-wrap map-wrap">
     <div id="map" class="world"></div>
-    <div class="hud tl">
-      <span class="hud-pill">${live ? '📍 GPS live' : '🎮 Demo GPS · tap the map to walk'}</span>
-    </div>
+    <div class="hud tl"><div class="segmented map-layers">${layer('clans', '🔥 Clans', state.clans.length)}${layer('gatherings', '📍 Gatherings', upcoming().length)}${layer('vigils', '🔱 Vigils', VIGILS.length)}</div></div>
     <div class="hud tr">
       <button class="icon-btn" id="locate" title="Use my real location">📍</button>
       <button class="icon-btn" id="zin" title="Zoom in">＋</button>
@@ -252,34 +267,75 @@ function mapView() {
       <button class="icon-btn" id="rain-btn" title="Toggle Seattle rain">☔</button>
     </div>
     <div class="hud bl trekbar" id="trekbar"></div>
+    <span class="gps-pill">${live ? '📍 GPS live' : '🎮 Demo GPS · tap the map to walk'}</span>
   </section>
-  <section class="card vigil-panel" id="vigil-panel"></section>
-  <section class="card">
-    <div class="card-head"><div><h2>Vigils of Seattle</h2><p class="muted small">Hold a landmark and your whole clan earns its tribute and boon every day, until a rival clan breaks the ward. Ward fades 8% a day, so keep fortifying.</p></div></div>
-    <ul class="vigil-list" id="vigil-list"></ul>
-  </section>
-  <section class="card how">
-    <h2>How vigils work</h2>
-    <ol class="steps">
-      <li><b>Move</b><span>Today's movement becomes <i>pledgeable</i> distance. 1 ${dUnit()} = ${imperial() ? Math.round(VIGIL.wardPerKm * G.KM_PER_MI) : VIGIL.wardPerKm} ward.</span></li>
-      <li><b>Go there</b><span>Stand within ${meters(VIGIL.radiusM)} of a landmark (GPS on your phone, or Demo GPS here).</span></li>
-      <li><b>Fortify, siege or establish</b><span>Pledge to raise your ward or break a rival's. Claiming an open vigil uses a Vigil Seal, earned by Awakening.</span></li>
-    </ol>
-  </section>`;
+  <section class="card sel-panel" id="sel-panel"></section>
+  <section class="card"><div id="layer-list"></div></section>`;
 }
 function updateTrekBar() {
   const el = $('#trekbar');
   if (!el) return;
   el.innerHTML = tracker.active
     ? `<span class="trek-live"><i class="rec"></i><b>${dist(tracker.distanceKm, 2)}</b> · ${tracker.mode === 'gps' ? `${Math.floor(tracker.elapsedMin)} min` : 'Demo GPS'}</span><button class="btn small primary" id="trek-stop">Stop &amp; log trek</button>`
-    : `<button class="btn small primary" id="trek-start">▶ Start a trek</button><span class="hint">${tracker.mode === 'gps' ? 'Records your route with GPS' : 'Tap the map to walk, then stop to log it'}</span>`;
+    : '<button class="btn small primary" id="trek-start">▶ Start a trek</button>';
   $('#trek-start')?.addEventListener('click', () => { tracker.start(state.player.pos); updateTrekBar(); });
   $('#trek-stop')?.addEventListener('click', () => {
     const t = tracker.stop();
     const near = G.nearestVigil(state);
-    try { commit(G.logTrek(state, { ...t, place: near.m < 600 ? near.site.name : '' })); }
-    catch (err) { toast(esc(err.message), 'bad'); updateTrekBar(); }
+    try { commit(G.logTrek(state, { ...t, place: near.m < 600 ? near.site.name : '' })); } catch (err) { toast(esc(err.message), 'bad'); updateTrekBar(); }
   });
+}
+function goButton(lat, lon, m, label = 'Walk here') {
+  return tracker.mode === 'gps'
+    ? `<a class="btn primary" href="https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=walking" target="_blank" rel="noopener">Directions (${meters(m)})</a>`
+    : `<button class="btn primary" data-walk="${lat},${lon}">🚶 ${label} (${meters(m)})</button>`;
+}
+function levelLine(c) {
+  const l = G.clanLevel(c);
+  return `<div class="lvl"><span><b>Lv ${l.level} · ${l.name}</b> <small>${l.xp.toLocaleString()} XP</small></span><div class="bar"><i style="width:${Math.round(l.pct * 100)}%"></i></div>${l.next ? `<small class="muted">Next: Lv ${l.next.level} ${l.next.name} at ${l.next.xp.toLocaleString()} XP · unlocks ${esc(l.next.unlock.toLowerCase())}</small>` : '<small class="muted">Max level</small>'}</div>`;
+}
+function clanPanelHTML(id) {
+  const c = G.clanById(state, id);
+  const a = aspectOf(c.aspect);
+  const st = G.clanStatus(c);
+  const mine = c.id === state.clanId;
+  const gs = upcoming().filter((g) => g.clanId === c.id).slice(0, 3);
+  const m = metersTo(c.hub);
+  return `
+    <div class="vp-head" style="--c:${a.color}"><span class="vp-orb"></span>
+      <div class="grow"><div class="eyebrow">${a.name} clan · Hearth in ${esc(c.hub.name)} · ${meters(m)} away</div><h2>${esc(c.name)}</h2></div>
+      ${mine ? '<span class="pill ok">Your clan</span>' : c.aspect === state.player.primary ? '<span class="tag">your Aspect</span>' : ''}</div>
+    <p class="motto">“${esc(c.motto)}”</p>
+    ${levelLine(c)}
+    <div class="vp-stats">
+      <div><small>Kin</small><b>${c.members.length}</b><span class="mini-kin">${c.members.slice(0, 6).map((k) => `<i style="background:${aspectOf(k.aspect).color}" title="${esc(k.name)} · ${aspectOf(k.aspect).name}"></i>`).join('')}</span></div>
+      <div><small>This week</small><b>${Math.round(st.pct * 100)}% · ${st.bonded.length}/${st.bondNeeded} Bonded</b>${gauge(st)}</div>
+      <div><small>Vigils held</small><b>${G.heldVigils(state, c.id).length}</b></div>
+    </div>
+    ${gs.length ? `<h3>Upcoming gatherings</h3><ul class="g-mini">${gs.map((g) => `<li data-sel="gathering:${g.id}">${ACTIVITIES[g.type].icon} <b>${esc(g.title)}</b> <small>${gDay(g)} ${g.time} · ${esc(G.spotById(g.spotId).name)}</small></li>`).join('')}</ul>` : ''}
+    <div class="row gap">${mine ? '<button class="btn" data-go="clan">Open clan</button><button class="btn" data-go="chat">Chat</button>' : `<button class="btn primary" data-join="${c.id}">Join ${esc(c.name)}</button>`}${goButton(c.hub.lat, c.hub.lon, m, 'Visit Hearth')}</div>`;
+}
+function gatheringPanelHTML(id) {
+  const g = state.gatherings.find((x) => x.id === id);
+  if (!g) return '<p class="muted">That gathering has ended.</p>';
+  const c = G.clanById(state, g.clanId);
+  const sp = G.spotById(g.spotId);
+  const m = metersTo(sp);
+  const today = g.day === G.dayKey(now());
+  const here = m <= GATHERING.radiusM;
+  const kin = c.members.filter((k) => g.going.includes(k.id));
+  let action;
+  if (g.attended) action = '<button class="btn" disabled>✓ Checked in</button>';
+  else if (today && here) action = `<button class="btn primary" data-attend="${g.id}">🤝 Check in (+${GATHERING.essence} essence, +${GATHERING.lumens} ✦)</button>`;
+  else action = `<button class="btn ${g.rsvp ? '' : 'primary'}" data-rsvp="${g.id}">${g.rsvp ? '✓ Going · undo' : 'I\'m going'}</button>${goButton(sp.lat, sp.lon, m, 'Head there')}`;
+  return `
+    <div class="vp-head" style="--c:${clanColor(c)}"><span class="g-ic">${ACTIVITIES[g.type].icon}</span>
+      <div class="grow"><div class="eyebrow">${gDay(g)} · ${g.time} · ${esc(sp.name)} · ${meters(m)} away</div><h2>${esc(g.title)}</h2></div>
+      ${matchesMe(g.type) ? '<span class="tag">matches your Aspects</span>' : ''}</div>
+    <p class="muted small">Hosted by <b>${esc(g.host)}</b> of <span style="color:${clanColor(c)}">${esc(c.name)}</span>. Open to everyone, any clan. ${aspectOf(ACTIVITIES[g.type].aspect).name} energy.</p>
+    <div class="going">${kin.map((k) => `<span class="who-chip" style="--c:${aspectOf(k.aspect).color}">${esc(k.name)}${k.isPlayer ? ' (you)' : ''}</span>`).join('')}${g.rsvp && !kin.some((k) => k.isPlayer) ? '<span class="who-chip me">You</span>' : ''}<small class="muted">${g.going.length} going</small></div>
+    <div class="row gap">${action}</div>
+    <p class="muted small">Check in on the day, at the spot, after you've moved. Showing up earns essence, ✦ and clan XP for both clans.</p>`;
 }
 function vigilPanelHTML(id) {
   const vs = G.vigilState(state, id);
@@ -288,88 +344,124 @@ function vigilPanelHTML(id) {
   const m = G.distanceTo(state, s);
   const here = m <= VIGIL.radiusM;
   const col = clanColor(vs.holderClan);
-  const mineHeld = clan && vs.holder === clan.id;
   const shielded = vs.shieldUntil && G.dayKey(now()) <= vs.shieldUntil;
   const avail = G.pledgeableKm(state);
   const visited = state.unlockedLore.includes(`vigil:${s.id}`);
   let action = '';
-  if (!clan) action = '<button class="btn primary" data-go="clan">Join a clan to compete</button>';
-  else if (!here) action = tracker.mode === 'gps'
-    ? `<a class="btn primary" href="https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lon}&travelmode=walking" target="_blank" rel="noopener">Directions (${meters(m)})</a>`
-    : `<button class="btn primary" id="walk-here">🚶 Walk here (${meters(m)})</button>`;
-  else if (mineHeld) action = `<button class="btn primary" id="v-fortify" ${avail > 0 ? '' : 'disabled'}>🛡️ Fortify with ${dist(avail)} (+${Math.round(avail * VIGIL.wardPerKm)} ward)</button>`;
-  else if (vs.holder) action = shielded ? '<button class="btn" disabled>🛡️ Shielded until tomorrow</button>' : `<button class="btn primary" id="v-siege" ${avail > 0 ? '' : 'disabled'}>⚔️ Siege with ${dist(avail)} (−${Math.round(avail * VIGIL.wardPerKm)} ward)</button>`;
-  else action = `<button class="btn primary" id="v-establish" ${clan.seals > 0 ? '' : 'disabled'}>🔱 Establish vigil (uses 1 of ${clan.seals} Seals)</button>`;
-  const needMove = clan && here && avail <= 0 && !(vs.holder === null) ? '<p class="muted small">You have no pledgeable movement left today. Start a trek, or log an activity, then pledge it here.</p>' : '';
+  if (!clan) action = '<button class="btn primary" data-layer-go="clans">Find a clan first</button>';
+  else if (!G.canVigil(clan)) { const l = G.clanLevel(clan); action = `<p class="callout">🔒 Vigils unlock at clan <b>Level ${VIGIL_MIN_LEVEL} · Outpost</b>. ${esc(clan.name)} is Lv ${l.level} (${l.xp.toLocaleString()} XP). Every mile your kin move, every Awakening and every gathering grows it.</p>`; }
+  else if (!here) action = goButton(s.lat, s.lon, m);
+  else if (vs.holder === clan.id) action = `<button class="btn primary" data-vact="fortify" ${avail > 0 ? '' : 'disabled'}>🛡️ Fortify with ${dist(avail)} (+${Math.round(avail * VIGIL.wardPerKm)} ward)</button>`;
+  else if (vs.holder) action = shielded ? '<button class="btn" disabled>🛡️ Shielded until tomorrow</button>' : `<button class="btn primary" data-vact="siege" ${avail > 0 ? '' : 'disabled'}>⚔️ Siege with ${dist(avail)} (−${Math.round(avail * VIGIL.wardPerKm)} ward)</button>`;
+  else action = `<button class="btn primary" data-vact="establish" ${clan.seals > 0 ? '' : 'disabled'}>🔱 Establish (uses 1 of ${clan.seals} Seals)</button>`;
   return `
-    <div class="vp-head" style="--c:${col || 'var(--muted)'}">
-      <span class="vp-orb"></span>
+    <div class="vp-head" style="--c:${col || 'var(--muted)'}"><span class="vp-orb"></span>
       <div class="grow"><div class="eyebrow">${esc(s.vigil)} · ${here ? '<b class="ok">You\'re here</b>' : `${meters(m)} away`}</div><h2>${esc(s.name)}</h2></div>
-      <span class="pill" style="background:${col ? col + '33' : ''}">${vs.holderClan ? esc(vs.holderClan.name) : 'Open'}</span>
-    </div>
+      <span class="pill" style="background:${col ? col + '33' : ''}">${vs.holderClan ? esc(vs.holderClan.name) : 'Open'}</span></div>
     <div class="vp-stats">
       <div><small>Ward</small>${wardBar(vs.ward, col)}<b>${vs.ward} / ${VIGIL.maxWard}</b></div>
       <div><small>Tribute</small><b>${lum(s.yield)} / day each</b></div>
       <div><small>Boon</small><b>${esc(s.boon.text)}</b></div>
     </div>
-    <div class="row gap">${action}${here && clan ? `<span class="muted small">Pledgeable today: <b>${dist(avail)}</b></span>` : ''}</div>
-    ${needMove}
+    <div class="row gap">${action}${here && clan && G.canVigil(clan) ? `<span class="muted small">Pledgeable today: <b>${dist(avail)}</b></span>` : ''}</div>
     <p class="lore ${visited ? '' : 'locked'}">${visited ? esc(s.lore) : '📜 Visit in person to unlock this landmark\'s story.'}</p>`;
 }
-function renderVigilPanel() {
-  const el = $('#vigil-panel');
+function renderPanel() {
+  const el = $('#sel-panel');
   if (!el) return;
-  const id = selectedVigil || G.nearestVigil(state).site.id;
-  el.innerHTML = vigilPanelHTML(id);
-  const act = (fn) => () => { try { commit(fn(state, id)); } catch (err) { toast(esc(err.message), 'bad'); } };
-  $('#v-fortify')?.addEventListener('click', act(G.fortify));
-  $('#v-siege')?.addEventListener('click', act(G.siege));
-  $('#v-establish')?.addEventListener('click', act(G.establish));
-  $('#walk-here')?.addEventListener('click', () => { const s = VIGILS.find((v) => v.id === id); map?.walkTo(s.lat, s.lon); });
+  const s = defaultSel();
+  if (!s) { el.innerHTML = '<p class="muted">Nothing here yet.</p>'; return; }
+  el.innerHTML = s.kind === 'clan' ? clanPanelHTML(s.id) : s.kind === 'gathering' ? gatheringPanelHTML(s.id) : vigilPanelHTML(s.id);
+  bindPanel(el, s);
 }
-function renderVigilList() {
-  const el = $('#vigil-list');
+function bindPanel(el, s) {
+  const run = (fn) => { try { commit(fn()); } catch (err) { toast(esc(err.message), 'bad'); } };
+  el.querySelectorAll('[data-join]').forEach((b) => b.addEventListener('click', () => { commit(G.joinClan(state, b.dataset.join)); toast(`🔥 You joined <b>${esc(G.playerClan(state).name)}</b>. Move on ${AWAKENING.bondDays} days this week to get Bonded.`, 'good'); }));
+  el.querySelectorAll('[data-walk]').forEach((b) => b.addEventListener('click', () => { const [la, lo] = b.dataset.walk.split(',').map(Number); map?.walkTo(la, lo); }));
+  el.querySelectorAll('[data-rsvp]').forEach((b) => b.addEventListener('click', () => run(() => G.rsvp(state, b.dataset.rsvp))));
+  el.querySelectorAll('[data-attend]').forEach((b) => b.addEventListener('click', () => run(() => G.attendGathering(state, b.dataset.attend))));
+  el.querySelectorAll('[data-vact]').forEach((b) => b.addEventListener('click', () => run(() => G[b.dataset.vact](state, s.id))));
+  el.querySelectorAll('[data-sel]').forEach((li) => li.addEventListener('click', () => { const [k, id] = li.dataset.sel.split(':'); mapLayer = k === 'gathering' ? 'gatherings' : mapLayer; select(k, id, true); }));
+  el.querySelectorAll('[data-layer-go]').forEach((b) => b.addEventListener('click', () => { mapLayer = b.dataset.layerGo; sel = null; render(); }));
+}
+function renderList() {
+  const el = $('#layer-list');
   if (!el) return;
   const clan = G.playerClan(state);
-  el.innerHTML = VIGILS.map((s) => ({ s, m: G.distanceTo(state, s), vs: G.vigilState(state, s.id) })).sort((a, b) => a.m - b.m).map(({ s, m, vs }) => {
-    const col = clanColor(vs.holderClan);
-    return `<li class="${clan && vs.holder === clan.id ? 'mine' : ''} ${selectedVigil === s.id ? 'sel' : ''}" data-vigil="${s.id}">
-      <span class="v-dot" style="background:${col || 'transparent'};border-color:${col || 'var(--muted)'}"></span>
-      <span class="grow"><b>${esc(s.name)}</b><small>${vs.holderClan ? esc(vs.holderClan.name) : 'Open'} · ${esc(s.boon.text)}</small></span>
-      ${vs.holder ? wardBar(vs.ward, col) : '<span class="pill dim">claim</span>'}
-      <span class="v-dist">${meters(m)}</span>
-    </li>`;
-  }).join('');
-  el.querySelectorAll('[data-vigil]').forEach((li) => li.addEventListener('click', () => selectVigil(li.dataset.vigil, true)));
+  const isSel = (k, id) => sel?.kind === k && sel.id === id;
+  if (mapLayer === 'clans') {
+    const rows = [...state.clans].sort((a, b) => metersTo(a.hub) - metersTo(b.hub)).map((c) => {
+      const a = aspectOf(c.aspect); const l = G.clanLevel(c); const st = G.clanStatus(c);
+      return `<li class="${c.id === state.clanId ? 'mine' : ''} ${isSel('clan', c.id) ? 'sel' : ''}" data-pick="clan:${c.id}"><span class="v-dot" style="background:${a.color};border-color:${a.color}"></span>
+        <span class="grow"><b>${a.spirit.glyph} ${esc(c.name)}</b><small>${a.name} · Lv ${l.level} ${l.name} · ${c.members.length} kin · ${Math.round(st.pct * 100)}% this week</small></span>
+        <span class="pill ${c.aspect === state.player.primary ? '' : 'dim'}">${c.aspect === state.player.primary ? 'your Aspect' : a.name}</span><span class="v-dist">${meters(metersTo(c.hub))}</span></li>`;
+    }).join('');
+    el.innerHTML = `<div class="card-head"><h2>Clans near you</h2></div><ul class="vigil-list">${rows}</ul>
+      ${clan ? '' : `<details class="found"><summary>Or found your own clan here</summary><form id="found-form" class="stack"><input id="clan-name" name="name" maxlength="32" placeholder="Clan name" required /><input id="clan-motto" name="motto" maxlength="60" placeholder="Motto (optional)" /><button class="btn primary" type="submit">Light your Hearth 🔥</button></form><p class="muted small">Your Hearth is placed where you are now. New clans start at Lv 1.</p></details>`}`;
+    $('#found-form')?.addEventListener('submit', (e) => { e.preventDefault(); const fd = new FormData(e.target); try { commit(G.foundClan(state, { name: fd.get('name'), motto: fd.get('motto') })); toast('🔥 Your Hearth is lit. Two wanderers answered the call.', 'epic'); } catch (err) { toast(esc(err.message), 'bad'); } });
+  } else if (mapLayer === 'gatherings') {
+    const gs = upcoming();
+    const canHost = clan && G.clanLevel(clan).level >= HOST_MIN_LEVEL;
+    el.innerHTML = `<div class="card-head"><div><h2>Gatherings around you</h2><p class="muted small">Clan activities anyone can join. ⭐ = matches your Aspects.</p></div></div>
+      <ul class="vigil-list">${gs.map((g) => { const c = G.clanById(state, g.clanId); const sp = G.spotById(g.spotId); return `<li class="${isSel('gathering', g.id) ? 'sel' : ''} ${g.rsvp ? 'mine' : ''}" data-pick="gathering:${g.id}"><span class="g-ic sm">${ACTIVITIES[g.type].icon}</span>
+        <span class="grow"><b>${matchesMe(g.type) ? '⭐ ' : ''}${esc(g.title)}</b><small>${gDay(g)} ${g.time} · ${esc(sp.name)} · <span style="color:${clanColor(c)}">${esc(c.name)}</span> · ${g.going.length} going</small></span>
+        ${g.attended ? '<span class="pill ok">attended</span>' : g.rsvp ? '<span class="pill ok">going</span>' : '<span class="pill dim">open</span>'}<span class="v-dist">${meters(metersTo(sp))}</span></li>`; }).join('') || '<li class="muted">No gatherings this week.</li>'}</ul>
+      ${clan ? (canHost ? hostForm(clan) : `<p class="callout">🔒 Hosting unlocks at clan <b>Level ${HOST_MIN_LEVEL} · Hearth</b>.</p>`) : ''}`;
+    $('#host-form')?.addEventListener('submit', (e) => { e.preventDefault(); const fd = new FormData(e.target); try { const ev = G.hostGathering(state, Object.fromEntries(fd)); sel = { kind: 'gathering', id: ev[0].g.id }; commit(ev); } catch (err) { toast(esc(err.message), 'bad'); } });
+  } else {
+    const rows = VIGILS.map((s) => ({ s, m: G.distanceTo(state, s), vs: G.vigilState(state, s.id) })).sort((a, b) => a.m - b.m).map(({ s, m, vs }) => {
+      const col = clanColor(vs.holderClan);
+      return `<li class="${clan && vs.holder === clan.id ? 'mine' : ''} ${isSel('vigil', s.id) ? 'sel' : ''}" data-pick="vigil:${s.id}"><span class="v-dot" style="background:${col || 'transparent'};border-color:${col || 'var(--muted)'}"></span>
+        <span class="grow"><b>${esc(s.name)}</b><small>${vs.holderClan ? esc(vs.holderClan.name) : 'Open'} · ${esc(s.boon.text)}</small></span>${vs.holder ? wardBar(vs.ward, col) : '<span class="pill dim">open</span>'}<span class="v-dist">${meters(m)}</span></li>`;
+    }).join('');
+    el.innerHTML = `<div class="card-head"><div><h2>Vigils</h2><p class="muted small">Clans at Level ${VIGIL_MIN_LEVEL}+ raise vigils on landmarks with today's movement. Holders earn daily ✦ and a boon until a rival breaks the ward.</p></div></div><ul class="vigil-list">${rows}</ul>`;
+  }
+  el.querySelectorAll('[data-pick]').forEach((li) => li.addEventListener('click', () => { const [k, id] = li.dataset.pick.split(':'); select(k, id, true); }));
 }
-function selectVigil(id, focus = false) {
-  selectedVigil = id;
+function hostForm(clan) {
+  const types = Object.keys(ACTIVITIES).sort((a, b) => (ACTIVITIES[b].aspect === clan.aspect) - (ACTIVITIES[a].aspect === clan.aspect));
+  return `<details class="found"><summary>➕ Host a gathering for ${esc(clan.name)}</summary>
+    <form id="host-form" class="host-form">
+      <label>Activity<select name="type">${types.map((t) => `<option value="${t}">${ACTIVITIES[t].icon} ${ACTIVITIES[t].label}</option>`).join('')}</select></label>
+      <label>Where<select name="spotId">${SPOTS.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></label>
+      <label>When<select name="when"><option value="today">Today</option><option value="tomorrow">Tomorrow</option><option value="weekend">Saturday</option></select></label>
+      <label>Time<input name="time" type="time" value="18:00" /></label>
+      <button class="btn primary" type="submit">Post to the map</button>
+    </form></details>`;
+}
+function select(kind, id, focus = false) {
+  sel = kind ? { kind, id } : null;
+  if (kind === 'vigil' && mapLayer !== 'vigils') mapLayer = 'vigils';
+  if (kind === 'gathering' && mapLayer === 'vigils') mapLayer = 'gatherings';
   if (map) map.update(mapModel());
-  if (id && focus) { const s = VIGILS.find((v) => v.id === id); map?.focusOn(s.lat, s.lon); gmap?.focusOn(s.lat, s.lon); }
-  renderVigilPanel();
-  renderVigilList();
-  if (id && focus) $('#vigil-panel')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  view.querySelectorAll('[data-layer]').forEach((b) => b.classList.toggle('active', b.dataset.layer === mapLayer));
+  if (kind && focus) {
+    const p = kind === 'clan' ? G.clanById(state, id).hub : kind === 'gathering' ? G.spotById(state.gatherings.find((g) => g.id === id).spotId) : VIGILS.find((v) => v.id === id);
+    map?.focusOn(p.lat, p.lon); gmap?.focusOn(p.lat, p.lon);
+  }
+  renderPanel();
+  renderList();
+  if (kind && focus) $('#sel-panel')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 bind.map = async function () {
   const host = $('#map');
   const pos = state.player.pos || HOME.start;
   const key = readKey();
+  view.querySelectorAll('[data-layer]').forEach((b) => b.addEventListener('click', () => { mapLayer = b.dataset.layer; sel = null; if (map) map.update(mapModel()); view.querySelectorAll('[data-layer]').forEach((x) => x.classList.toggle('active', x === b)); renderPanel(); renderList(); }));
   if (state.settings.mapEngine === 'google' && key) {
-    try {
-      gmap = await createGoogle3D(host, key, { center: pos, onSelectVigil: (id) => selectVigil(id) });
-      gmap.setVigils(vigilModel());
-    } catch (err) { toast(`${esc(err.message)} Using the built-in map.`, 'bad'); gmap = null; }
+    try { gmap = await createGoogle3D(host, key, { center: pos, onSelectVigil: (id) => select('vigil', id) }); gmap.setVigils(vigilModel()); }
+    catch (err) { toast(`${esc(err.message)} Using the built-in map.`, 'bad'); gmap = null; }
   }
   if (!gmap) {
     if (!map && !mapFailed) {
       map = createMap3D({
-        onSelectVigil: (id) => selectVigil(id),
+        onSelect: (kind, id) => select(kind, id),
         onMove: (lat, lon, mode) => { if (mode !== 'demo') return; state.player.pos = { lat, lon }; tracker.feed(lat, lon); onPositionChanged(); },
       });
       mapFailed = !map;
       if (map) { map.setPlayer(pos.lat, pos.lon, { jump: true }); const mo = new Date().getMonth(); map.setRain(mo >= 9 || mo <= 3); }
     }
-    if (!map) host.innerHTML = '<div class="world-fallback">The 3D map needs WebGL, which isn\'t available in this browser. The vigil list below still works.</div>';
+    if (!map) host.innerHTML = '<div class="world-fallback">The 3D map needs WebGL, which isn\'t available in this browser. The lists below still work.</div>';
     else { map.mount(host); map.setMode(tracker.mode); map.update(mapModel()); map.setTrack(tracker.points); }
   }
   $('#rain-btn').classList.toggle('on', !!map?.rain);
@@ -380,20 +472,16 @@ bind.map = async function () {
     try {
       const p = await locateOnce();
       state.player.pos = { lat: p.lat, lon: p.lon };
-      tracker.follow();
-      map?.setMode('gps');
-      map?.setPlayer(p.lat, p.lon, { jump: true });
-      gmap?.setPlayer(p.lat, p.lon);
+      tracker.follow(); map?.setMode('gps'); map?.setPlayer(p.lat, p.lon, { jump: true }); gmap?.setPlayer(p.lat, p.lon);
       toast(`📍 Located (±${Math.round(p.accuracy)} m). Your avatar now follows your phone.`, 'good');
-      save();
-      render();
+      save(); render();
     } catch (err) {
       toast(`${esc(err.message)} Using Demo GPS: tap the map to walk. On your phone (GitHub Pages or installed app) your real position is used.`, 'bad');
     }
   });
   updateTrekBar();
-  renderVigilPanel();
-  renderVigilList();
+  renderPanel();
+  renderList();
 };
 
 // ---------- LOG ----------
@@ -520,6 +608,13 @@ function clanView() {
     <div class="clan-stats"><span><b>${held.length}</b>vigils</span><span><b>${clan.seals}</b>seals</span><span><b>${Math.round(tribute)}</b>✦/day</span></div>
   </section>
 
+  <section class="card">
+    <div class="card-head"><h2>Clan level</h2></div>
+    ${levelLine(clan)}
+    <ul class="unlocks">${CLAN_LEVELS.map((l) => `<li class="${G.clanLevel(clan).level >= l.level ? 'on' : ''}"><b>${G.clanLevel(clan).level >= l.level ? '✓' : '🔒'} Lv ${l.level} ${l.name}</b><small>${esc(l.unlock)}</small></li>`).join('')}</ul>
+    <p class="muted small">Clan XP comes from every mile your kin move, +150 per Awakening, and +${GATHERING.clanXp} per gathering someone shows up to.</p>
+  </section>
+
   <section class="card whisper"><span class="quote-mark">“</span>${esc(G.spiritWhisper(state))}</section>
 
   <section class="card">
@@ -541,7 +636,7 @@ function clanView() {
 
   <section class="card">
     <div class="card-head"><h2>Our vigils</h2><button class="btn small" data-go="map">Map</button></div>
-    ${held.length ? `<ul class="vigil-list static">${held.map((s) => { const v = state.vigils[s.id]; return `<li><span class="v-dot" style="background:${a.color};border-color:${a.color}"></span><span class="grow"><b>${esc(s.name)}</b><small>${esc(s.boon.text)} · ${s.yield} ✦/day</small></span>${wardBar(v.ward, a.color)}<span class="v-dist">${v.ward}</span></li>`; }).join('')}</ul>`
+    ${!G.canVigil(clan) ? `<p class="callout">🔒 Vigils unlock at <b>Level ${VIGIL_MIN_LEVEL} · Outpost</b>. Grow the clan to claim ground on the map.</p>` : held.length ? `<ul class="vigil-list static">${held.map((s) => { const v = state.vigils[s.id]; return `<li><span class="v-dot" style="background:${a.color};border-color:${a.color}"></span><span class="grow"><b>${esc(s.name)}</b><small>${esc(s.boon.text)} · ${s.yield} ✦/day</small></span>${wardBar(v.ward, a.color)}<span class="v-dist">${v.ward}</span></li>`; }).join('')}</ul>`
       : `<p class="muted">No vigils yet. ${clan.seals ? `You have ${clan.seals} Vigil Seal${clan.seals === 1 ? '' : 's'}: walk to an open landmark and establish one.` : 'Awaken the clan to earn Seals, or siege a rival vigil until it falls.'}</p>`}
   </section>
 
@@ -573,30 +668,10 @@ function clanView() {
   </section>`;
 }
 function clanPickerView() {
-  const mine = state.player.primary;
-  const ranks = G.weeklyRanks(state).sort((x, y) => (y.clan.aspect === mine) - (x.clan.aspect === mine));
-  return `
-  <section class="card">
-    <h2>Find your Seattle clan</h2>
-    <p class="muted">A clan charges one weekly Awakening and holds vigils together. Clans of your Aspect are listed first, but anyone can join any clan, and every activity counts.</p>
-    <div class="clan-list">${ranks.map(({ clan: c, st, vigils }) => {
-      const a = aspectOf(c.aspect);
-      return `<div class="clan-row" style="--c:${a.color}"><span class="clan-sigil sm">${a.spirit.glyph}</span>
-        <div class="grow"><b>${esc(c.name)}</b> ${c.aspect === mine ? '<span class="tag">your Aspect</span>' : ''}<div class="muted small">${a.name} · “${esc(c.motto)}” · ${c.members.length} kin · ${vigils} vigils · this week ${Math.round(st.pct * 100)}%</div></div>
-        <button class="btn small primary" data-join="${c.id}">Join</button></div>`;
-    }).join('')}</div>
-  </section>
-  <section class="card">
-    <h2>Or found a new clan</h2>
-    <form id="found-form" class="stack">
-      <input id="clan-name" name="name" maxlength="32" placeholder="Clan name, e.g. Ballard Ridge Runners" required />
-      <input id="clan-motto" name="motto" maxlength="60" placeholder="Motto (optional)" />
-      <button class="btn primary" type="submit">Light the fire 🔥</button>
-    </form>
-    <p class="muted small">New clans start with 1 Vigil Seal.</p>
-  </section>`;
+  return `<section class="card"><h2>You haven't joined a clan yet</h2><p class="muted">Clans live on the map. Each one has a Hearth in a Seattle neighborhood.</p><button class="btn primary" id="to-clans">Find clans on the map</button></section>`;
 }
 bind.clan = function () {
+  $('#to-clans')?.addEventListener('click', () => { tab = 'map'; mapLayer = 'clans'; sel = null; render(); });
   view.querySelectorAll('[data-join]').forEach((b) => b.addEventListener('click', () => { commit(G.joinClan(state, b.dataset.join)); toast(`🔥 You joined <b>${esc(G.playerClan(state).name)}</b>. Move on ${AWAKENING.bondDays} days this week to become Bonded.`, 'good'); }));
   $('#found-form')?.addEventListener('submit', (e) => {
     e.preventDefault();

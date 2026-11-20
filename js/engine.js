@@ -1,7 +1,7 @@
 // Wildbound — game rules (no DOM). Mutating functions take the state object and return UI events.
 import {
   ASPECTS, ASPECT_IDS, AFFINITY, ACTIVITIES, INTENSITY, EXPEDITIONS, BADGES, SEED_CLANS, SEED_VIGILS, AWAKENING, POWERS,
-  VIGIL, VIGILS, SHOP, CHAT, HOME,
+  VIGIL, VIGILS, SHOP, CHAT, HOME, CLAN_LEVELS, VIGIL_MIN_LEVEL, HOST_MIN_LEVEL, SPOTS, GATHERING_TEMPLATES, GATHERING,
 } from './data.js';
 import { haversineM } from './geo.js';
 
@@ -37,7 +37,8 @@ export const worldNow = (state) => addDays(new Date(), state.dayOffset || 0);
 
 export function newState(now = new Date()) {
   const s = {
-    version: 3,
+    version: 4,
+    gatherings: [],
     player: null,
     activities: [],
     bonusEssence: 0,
@@ -64,6 +65,8 @@ export function newState(now = new Date()) {
   for (let d = fromKey(weekStart(now)); dayKey(d) < dayKey(now); d = addDays(d, 1)) {
     for (const clan of s.clans) botsActOnDay(s, clan, d, rng, { quiet: true });
   }
+  s.clans.forEach((c, i) => { c.xp = SEED_CLANS[i].xp; });
+  ensureGatherings(s, now);
   return s;
 }
 
@@ -75,7 +78,7 @@ function seedClan(c, i, now) {
     id: 'm-' + name.toLowerCase(), name, aspect, propensity, isPlayer: false, totalKm: r1(30 + rng() * 90),
   }));
   return {
-    id: c.id, name: c.name, aspect: c.aspect, motto: c.motto, founded: false, members,
+    id: c.id, name: c.name, aspect: c.aspect, motto: c.motto, founded: false, members, hub: { ...c.hub }, xp: c.xp || 0,
     journeyId: EXPEDITIONS[0].id, journeyKm: r1(rng() * EXPEDITIONS[0].lengthKm * 0.4), completed: [],
     totalKm: r1(members.reduce((a, m) => a + m.totalKm, 0)),
     week: emptyWeek(weekStart(now)), history: [], awakenings: i % 3, seals: c.seals ?? 1, power: null, lastRank: null,
@@ -101,6 +104,15 @@ export function setAspects(state, primary, secondary) {
 
 export const playerClan = (state) => state.clans.find((c) => c.id === state.clanId) || null;
 export const clanById = (state, id) => state.clans.find((c) => c.id === id) || null;
+export function clanLevel(clan) {
+  const xp = clan?.xp || 0;
+  let cur = CLAN_LEVELS[0];
+  for (const l of CLAN_LEVELS) if (xp >= l.xp) cur = l;
+  const next = CLAN_LEVELS.find((l) => l.level === cur.level + 1) || null;
+  return { ...cur, xp: Math.round(xp), next, pct: next ? (xp - cur.xp) / (next.xp - cur.xp) : 1 };
+}
+export const canVigil = (clan) => clanLevel(clan).level >= VIGIL_MIN_LEVEL;
+export const spotById = (id) => SPOTS.find((x) => x.id === id);
 export const getExpedition = (id) => EXPEDITIONS.find((e) => e.id === id) || EXPEDITIONS[0];
 
 // ---------- boons & powers ----------
@@ -202,6 +214,7 @@ export function streak(state, now = worldNow(state)) {
 // ---------- clan week & awakening ----------
 
 function record(clan, memberId, aspect, km, type, date) {
+  clan.xp = r1((clan.xp || 0) + km);
   const w = clan.week;
   if (weekStart(date) !== w.start) return;
   w.energy[aspect] = r1((w.energy[aspect] || 0) + km);
@@ -251,7 +264,8 @@ export function evaluateTiers(state, clan, now) {
     clan.week.awakened = true;
     clan.week.tiers.push('awakened');
     clan.awakenings += 1;
-    clan.seals += AWAKENING.seals;
+    clan.seals += AWAKENING.seals + (clanLevel(clan).level >= 4 ? 1 : 0);
+    clan.xp = (clan.xp || 0) + 150;
     clan.power = { id: st.dominant, until: dayKey(addDays(fromKey(clan.week.start), 13)) };
     if (mine) {
       state.bonusEssence += 150;
@@ -375,7 +389,8 @@ export function foundClan(state, { name, motto }, now = worldNow(state)) {
   if (!clean) throw new Error('Give your clan a name');
   const id = 'clan-' + Math.random().toString(36).slice(2, 8);
   state.clans.push({
-    id, name: clean, aspect: state.player.primary, motto: (motto || '').trim().slice(0, 60) || ASPECTS[state.player.primary].motto, founded: true,
+    id, hub: { name: 'Your hearth', lat: state.player.pos.lat, lon: state.player.pos.lon }, xp: 0,
+    name: clean, aspect: state.player.primary, motto: (motto || '').trim().slice(0, 60) || ASPECTS[state.player.primary].motto, founded: true,
     members: [
       { id: 'm-tamsin', name: 'Tamsin', aspect: 'galewing', propensity: 0.6, isPlayer: false, totalKm: 0 },
       { id: 'm-bodhi', name: 'Bodhi', aspect: 'ironroot', propensity: 0.5, isPlayer: false, totalKm: 0 },
@@ -489,6 +504,7 @@ export function visitIfNear(state, now = worldNow(state)) {
 function requireAction(state, id, now) {
   const clan = playerClan(state);
   if (!clan) throw new Error('Join a clan to take part in vigils');
+  if (!canVigil(clan)) throw new Error(`Vigils unlock when your clan reaches Level ${VIGIL_MIN_LEVEL} (${CLAN_LEVELS[VIGIL_MIN_LEVEL - 1].name}). Keep moving together.`);
   const vs = vigilState(state, id);
   if (!inRange(state, vs.site)) throw new Error(`You need to be within ${VIGIL.radiusM} m of ${vs.site.name}. Head there first.`);
   return { clan, vs, v: state.vigils[id] };
@@ -538,7 +554,7 @@ function fall(state, id, breaker, now, overflow = 0) {
     addChat(state, state.clanId, { kind: 'system', text: `💔 ${breaker.name} broke our vigil at ${site.name}! Retake it.` }, now);
     events.push({ type: 'lost', site, by: breaker });
   }
-  if (breaker.seals > 0) {
+  if (breaker.seals > 0 && canVigil(breaker)) {
     breaker.seals -= 1;
     v.holder = breaker.id;
     v.ward = VIGIL.establishWard + Math.max(0, overflow);
@@ -582,7 +598,7 @@ function dailyTick(state, date, rng) {
     if (!v?.holder) continue;
     const holder = clanById(state, v.holder);
     const empowered = !!activePower(holder, date);
-    v.ward = Math.round(v.ward * (1 - VIGIL.decay * (empowered ? 0.5 : 1)));
+    v.ward = Math.round(v.ward * (1 - VIGIL.decay * (empowered ? 0.5 : 1) * (clanLevel(holder).level >= 5 ? 0.75 : 1)));
     if (v.ward < 5) {
       if (v.holder === mine) addChat(state, mine, { kind: 'system', text: `🕯️ Our vigil at ${site.name} faded from neglect. Fortify vigils to keep them.` }, date);
       v.holder = null; v.ward = 0;
@@ -619,7 +635,7 @@ function dailyTick(state, date, rng) {
         }
       }
     }
-    if (clan.seals > 0 && rng() < 0.35) {
+    if (clan.seals > 0 && canVigil(clan) && rng() < 0.35) {
       const open = VIGILS.filter((s) => !state.vigils[s.id].holder);
       if (open.length) {
         const site = open[Math.floor(rng() * open.length)];
@@ -634,6 +650,91 @@ function dailyTick(state, date, rng) {
 
 function notifyRival(state, text, now) {
   if (state.clanId) addChat(state, state.clanId, { kind: 'system', text: `👁️ ${text}` }, now);
+}
+
+// ---------- gatherings (clan activities happening around the city) ----------
+
+export function ensureGatherings(state, now = worldNow(state)) {
+  const today = dayKey(now);
+  state.gatherings = (state.gatherings || []).filter((g) => g.day >= today);
+  const rng = mulberry32((fromKey(today).getTime() / 1000 + state.gatherings.length) >>> 0);
+  for (const clan of state.clans) {
+    if (clan.founded) continue; // player-founded clans gather when the player hosts
+    const bots = clan.members.filter((m) => !m.isPlayer);
+    const tpl = GATHERING_TEMPLATES[clan.aspect];
+    let have = state.gatherings.filter((g) => g.clanId === clan.id).length;
+    while (have < 2) {
+      const [title, type, spotId, time] = tpl[Math.floor(rng() * tpl.length)];
+      const offset = have === 0 && rng() < 0.6 ? 0 : 1 + Math.floor(rng() * 5);
+      const day = dayKey(addDays(now, offset));
+      if (state.gatherings.some((g) => g.clanId === clan.id && g.day === day)) { have++; continue; }
+      const host = bots[Math.floor(rng() * bots.length)];
+      const going = bots.filter(() => rng() < 0.55).map((m) => m.id);
+      if (!going.includes(host.id)) going.push(host.id);
+      state.gatherings.push({ id: 'g' + Math.random().toString(36).slice(2, 9), clanId: clan.id, title, type, spotId, day, time, host: host.name, going, rsvp: false, attended: false });
+      have++;
+    }
+  }
+  state.gatherings.sort((a, b) => (a.day + a.time < b.day + b.time ? -1 : 1));
+}
+
+export function rsvp(state, id, now = worldNow(state)) {
+  const g = state.gatherings.find((x) => x.id === id);
+  if (!g) throw new Error('That gathering is over');
+  g.rsvp = !g.rsvp;
+  g.going = g.rsvp ? [...new Set([...g.going, 'me'])] : g.going.filter((x) => x !== 'me');
+  const clan = playerClan(state);
+  if (g.rsvp && clan) {
+    const host = clanById(state, g.clanId);
+    addChat(state, clan.id, { kind: 'system', text: `📅 ${state.player.name} is going to ${host.id === clan.id ? '' : `${host.name}'s `}${g.title} at ${spotById(g.spotId).name} (${fmtGDay(g.day, now)} ${g.time}).` }, now);
+  }
+  return [{ type: 'rsvp', g }];
+}
+
+export function attendGathering(state, id, now = worldNow(state)) {
+  const g = state.gatherings.find((x) => x.id === id);
+  if (!g) throw new Error('That gathering is over');
+  if (g.attended) throw new Error('You already checked in here');
+  if (g.day !== dayKey(now)) throw new Error(`This gathering is on ${fmtGDay(g.day, now)}. Come back then.`);
+  const spot = spotById(g.spotId);
+  if (haversineM(state.player.pos, spot) > GATHERING.radiusM) throw new Error(`Check-in opens within ${GATHERING.radiusM} m of ${spot.name}.`);
+  if (!state.activities.some((a) => dayKey(a.date) === dayKey(now))) throw new Error('Move first: track a trek or log the activity, then check in.');
+  g.attended = true;
+  g.going = [...new Set([...g.going, 'me'])];
+  state.bonusEssence += GATHERING.essence;
+  state.lumens += GATHERING.lumens;
+  const host = clanById(state, g.clanId);
+  host.xp = (host.xp || 0) + GATHERING.clanXp;
+  const mine = playerClan(state);
+  if (mine && mine.id !== host.id) mine.xp = (mine.xp || 0) + GATHERING.clanXp;
+  if (mine) addChat(state, mine.id, { kind: 'system', text: `🤝 ${state.player.name} showed up to ${host.id === mine.id ? 'our' : `${host.name}'s`} ${g.title} at ${spot.name}. +${GATHERING.clanXp} clan XP.` }, now);
+  state.flags.gatherings = (state.flags.gatherings || 0) + 1;
+  return [{ type: 'attended', g, spot }, ...checkBadges(state, now)];
+}
+
+export function hostGathering(state, { type, spotId, when = 'today', time = '18:00' }, now = worldNow(state)) {
+  const clan = playerClan(state);
+  if (!clan) throw new Error('Join a clan first');
+  const lvl = clanLevel(clan);
+  if (lvl.level < HOST_MIN_LEVEL) throw new Error(`Hosting unlocks at clan Level ${HOST_MIN_LEVEL} (${CLAN_LEVELS[HOST_MIN_LEVEL - 1].name}).`);
+  const spot = spotById(spotId);
+  if (!spot || !ACTIVITIES[type]) throw new Error('Pick an activity and a place');
+  const day = dayKey(addDays(now, when === 'tomorrow' ? 1 : when === 'weekend' ? Math.max(0, 5 - weekdayIdx(now)) : 0));
+  const rng = mulberry32(Date.now() >>> 0);
+  const bots = clan.members.filter((m) => !m.isPlayer);
+  const going = ['me', ...bots.filter(() => rng() < 0.5).map((m) => m.id)];
+  const g = { id: 'g' + Math.random().toString(36).slice(2, 9), clanId: clan.id, title: `${ACTIVITIES[type].label} at ${spot.name}`, type, spotId, day, time, host: state.player.name, going, rsvp: true, attended: false };
+  state.gatherings.push(g);
+  state.gatherings.sort((a, b) => (a.day + a.time < b.day + b.time ? -1 : 1));
+  addChat(state, clan.id, { kind: 'rally', from: clan.members.find((m) => m.isPlayer), text: `📍 New gathering: ${g.title}, ${fmtGDay(day, now)} ${time}. Who's in?` }, now);
+  bots.filter((b) => going.includes(b.id)).slice(0, 2).forEach((b) => addChat(state, clan.id, { kind: 'msg', from: b, text: pick(CHAT.rallyReply, rng) }, now));
+  return [{ type: 'hosted', g }];
+}
+
+export function fmtGDay(day, now) {
+  if (day === dayKey(now)) return 'today';
+  if (day === dayKey(addDays(now, 1))) return 'tomorrow';
+  return fromKey(day).toLocaleDateString(undefined, { weekday: 'short' });
 }
 
 // ---------- shop ----------
@@ -795,9 +896,10 @@ function botsActOnDay(state, clan, date, rng, { quiet = false } = {}) {
   const all = Object.keys(ACTIVITIES);
   const power = activePower(clan, date);
   const boons = boonsFor(state, clan.id);
+  const going = new Set((state.gatherings || []).filter((g) => g.day === dayKey(date)).flatMap((g) => g.going));
   for (const m of clan.members) {
     if (m.isPlayer) continue;
-    if (rng() >= Math.min(0.95, m.propensity + (rallied ? 0.35 : 0))) continue;
+    if (rng() >= Math.min(0.95, m.propensity + (rallied ? 0.35 : 0) + (going.has(m.id) ? 0.4 : 0))) continue;
     const aff = ASPECT_ACTS[m.aspect];
     const type = rng() < 0.6 ? aff[Math.floor(rng() * aff.length)] : all[Math.floor(rng() * all.length)];
     const minutes = 15 + Math.round(rng() * 6) * 5;
@@ -839,6 +941,7 @@ export function simulateDay(state) {
   events = events.concat(dailyTick(state, now, rng));
   state.dayOffset = (state.dayOffset || 0) + 1;
   events = events.concat(ensureWeeks(state, worldNow(state)));
+  ensureGatherings(state, worldNow(state));
   return events.concat(checkBadges(state));
 }
 
@@ -856,6 +959,7 @@ export function catchUp(state, realNow = new Date()) {
     n++;
   }
   state.lastRealDay = today;
+  ensureGatherings(state);
   return events.concat(ensureWeeks(state));
 }
 
@@ -876,6 +980,7 @@ export function checkBadges(state, now = worldNow(state)) {
   award('awakened', spiritProgress(totalEssence(state)).stage >= 1);
   award('century', totalTrailKm(state) >= 100 * KM_PER_MI);
   award('awakener', !!state.flags.awakener);
+  award('gatherer', (state.flags.gatherings || 0) >= 1);
   return earned;
 }
 

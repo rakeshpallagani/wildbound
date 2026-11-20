@@ -10,7 +10,16 @@ Wildbound is a clan-based movement game set in real-world Seattle. Every walk, l
 |---|---|---|
 | ![3D map](docs/screenshots/map-3d.png) | ![Log](docs/screenshots/log.png) | ![Chat](docs/screenshots/chat-mobile.png) |
 
-## Core loop (v0.3, Seattle)
+## Product plan
+
+| Phase | What ships | Why |
+|---|---|---|
+| **1 · Social core** | Pick a primary Aspect → find a clan **on the map** (each clan has a Hearth in a neighborhood) → log or sync activity → clan chat → weekly Awakening → **gatherings**: clan activities happening nearby that anyone can join and check in to | Clans and real meetups are fun with 3 friends. This builds density before territory matters. |
+| **2 · Territory** | **Vigils** on landmarks, unlocked at **clan Level 3 · Outpost**, with tribute, boons, sieges and the Lumen shop | Competition between clans needs enough players nearby, verified GPS, and safety rules. The goal is visible (locked) from day one. |
+
+Clan levels: Lv 1 Campfire (chat, Awakening, join gatherings) → Lv 2 Hearth (host gatherings) → **Lv 3 Outpost (vigils)** → Lv 4 Stronghold (+1 Seal per Awakening) → Lv 5 Citadel (vigils fade slower). Clan XP comes from members' miles, Awakenings and gathering attendance.
+
+## Core loop
 
 ```
 Move in real life ──► GPS trek on the map · Strava / Apple Health / Health Connect / Garmin · manual log

@@ -529,3 +529,45 @@ h3 { font-size: 14px; text-transform: uppercase; letter-spacing: .08em; color: v
   .clan-banner .clan-stats { width: 100%; justify-content: space-around; }
   .map-wrap { height: 62vh; }
 }
+
+/* =================== v4: clan hearths, gatherings, levels =================== */
+.hero.compact { padding: 12px 4px 0; }
+.hero.compact h1 { font-size: clamp(28px, 5vw, 40px); }
+.onboard-name { margin-top: 16px; }
+.intro-strip { padding: 12px 16px; font-size: 14px; border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.map-layers { margin: 0; background: rgba(12,18,15,.78); backdrop-filter: blur(6px); }
+.map-layers button { font-size: 12px; padding: 6px 10px; color: #cfd8d2; }
+.map-layers button small { opacity: .7; }
+.map-layers button.active { color: #111; }
+.gps-pill { position: absolute; right: 10px; bottom: 12px; pointer-events: none; font-size: 11px; padding: 4px 10px; border-radius: 999px; background: rgba(12,18,15,.7); color: #cfd8d2; z-index: 2; }
+.trekbar { right: 170px; }
+.sel-panel .motto { margin: 6px 0 10px; }
+.lvl { display: grid; gap: 4px; margin: 6px 0; }
+.lvl small { color: var(--muted); }
+.mini-kin { display: flex; gap: 3px; }
+.mini-kin i { width: 10px; height: 10px; border-radius: 50%; }
+.g-mini { list-style: none; padding: 0; margin: 0 0 10px; display: grid; gap: 4px; }
+.g-mini li { padding: 8px 10px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); cursor: pointer; font-size: 14px; }
+.g-mini li:hover { border-color: var(--accent); }
+.g-mini small { color: var(--muted); }
+.g-ic { width: 40px; height: 40px; flex: none; border-radius: 12px; display: grid; place-items: center; font-size: 22px; background: color-mix(in srgb, var(--c, var(--accent)) 25%, var(--bg)); }
+.g-ic.sm { width: 22px; height: 22px; font-size: 15px; background: none; }
+.going { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0 12px; }
+.who-chip { font-size: 12px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--c, var(--accent)); color: var(--text); }
+.who-chip.me { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 25%, transparent); }
+.found { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.found summary { cursor: pointer; font-weight: 600; margin-bottom: 8px; }
+.host-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; align-items: end; }
+.host-form label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; width: 100%; }
+.unlocks { list-style: none; padding: 0; margin: 10px 0 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px; }
+.unlocks li { padding: 8px 10px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); display: grid; gap: 2px; font-size: 13px; opacity: .6; }
+.unlocks li.on { opacity: 1; border-color: var(--accent); }
+.unlocks small { color: var(--muted); }
+.vigil-list li.muted { cursor: default; display: block; }
+@media (max-width: 560px) {
+  .hud.tl { right: 10px; top: 54px; }
+  .map-layers button { padding: 5px 8px; font-size: 11px; }
+  .trekbar { right: 10px; bottom: 10px; }
+  .gps-pill { top: 96px; bottom: auto; left: 10px; right: auto; }
+}

@@ -5,7 +5,7 @@
 import { project, unproject, BOUNDS, WATER, ISLANDS, CHANNELS, PARKS, ROADS, NEIGHBORHOODS, WATER_LABELS, isWater, isPark } from './geo.js';
 import { VIGILS, VIGIL } from './data.js';
 
-export function createMap3D({ onSelectVigil = () => {}, onMove = () => {} } = {}) {
+export function createMap3D({ onSelect = () => {}, onMove = () => {} } = {}) {
   const THREE = window.THREE;
   if (!THREE) return null;
   let renderer;
@@ -286,7 +286,7 @@ export function createMap3D({ onSelectVigil = () => {}, onMove = () => {} } = {}
     const shield = new THREE.Mesh(new THREE.SphereGeometry(14, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#9fd3ff', transparent: true, opacity: 0.15, depthWrite: false }));
     shield.visible = false;
     g.add(beam, base, wardArc, orb, tag, shield);
-    [beam, orb, tag, ...model.children].forEach((o) => { o.userData.vigilId = v.id; pickables.push(o); });
+    [beam, orb, tag, ...model.children].forEach((o) => { o.userData.pick = { kind: 'vigil', id: v.id }; pickables.push(o); });
     add(g);
     vigilObjs[v.id] = { g, beam, base, wardArc, orb, tag, shield, key: '' };
   });
@@ -315,10 +315,55 @@ export function createMap3D({ onSelectVigil = () => {}, onMove = () => {} } = {}
       o.tag = label(v.label, { color: v.color ? '#ffffff' : '#d7dbd6', bg: v.color ? hexA(v.color, 0.85) : 'rgba(15,22,18,0.7)' });
       o.tag.position.y = 60;
       o.tag.scale.set(52, 52 / o.tag.userData.aspect, 1);
-      o.tag.userData.vigilId = v.id;
+      o.tag.userData.pick = { kind: 'vigil', id: v.id };
       pickables.push(o.tag);
       o.g.add(o.tag);
     });
+  }
+
+  // ---------- clan hearths & gatherings ----------
+  const places = add(new THREE.Group());
+  let placePicks = [];
+  let placesSig = '';
+  function tagAll(obj, pick) { obj.traverse((o) => { o.userData.pick = pick; placePicks.push(o); }); }
+  function hearth(h) {
+    const g = new THREE.Group();
+    g.position.copy(at(h.lat, h.lon));
+    for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2; const st = new THREE.Mesh(new THREE.DodecahedronGeometry(1.1, 0), mat('#76736c')); st.position.set(Math.cos(a) * 4, 0.6, Math.sin(a) * 4); g.add(st); }
+    const fire = new THREE.Mesh(new THREE.ConeGeometry(2.2, 6, 7), glow(h.color, 1.6)); fire.position.y = 3; g.add(fire);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 22, 6), mat('#d9d6cc')); pole.position.set(6, 11, 0); g.add(pole);
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(9, 5.5), new THREE.MeshStandardMaterial({ color: h.color, side: THREE.DoubleSide, emissive: h.color, emissiveIntensity: 0.25 })); flag.position.set(10.5, 19, 0); g.add(flag);
+    const R = 22 + h.level * 9;
+    const turf = new THREE.Mesh(new THREE.CircleGeometry(R, 48), new THREE.MeshBasicMaterial({ color: h.color, transparent: true, opacity: h.selected ? 0.22 : 0.12, depthWrite: false }));
+    turf.rotation.x = -Math.PI / 2; turf.position.y = 0.7; g.add(turf);
+    const edge = new THREE.Mesh(new THREE.RingGeometry(R - 1.2, R, 64), new THREE.MeshBasicMaterial({ color: h.selected ? '#ffd36e' : h.color, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }));
+    edge.rotation.x = -Math.PI / 2; edge.position.y = 0.8; g.add(edge);
+    const tag = label(`${h.glyph} ${h.name} · Lv ${h.level}${h.mine ? ' · yours' : ''}`, { color: '#111', bg: hexA(h.color, 0.95), w: 320 });
+    tag.position.y = 34; tag.scale.set(58, 58 / tag.userData.aspect, 1); g.add(tag);
+    g.userData.flag = flag; g.userData.fire = fire;
+    tagAll(g, { kind: 'clan', id: h.id });
+    return g;
+  }
+  function pin(p) {
+    const g = new THREE.Group();
+    g.position.copy(at(p.lat, p.lon));
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 18, 6), new THREE.MeshBasicMaterial({ color: p.color })); pole.position.y = 9; g.add(pole);
+    const dot = new THREE.Mesh(new THREE.CircleGeometry(4, 20), new THREE.MeshBasicMaterial({ color: p.color, transparent: true, opacity: 0.5, depthWrite: false })); dot.rotation.x = -Math.PI / 2; dot.position.y = 0.9; g.add(dot);
+    const tag = label(`${p.icon} ${p.when}${p.going ? ' · ✓' : ''}`, { color: '#111', bg: hexA(p.highlight ? '#ffe08a' : '#e9efe6', 0.95), size: 30, w: 220 });
+    tag.position.y = 22; tag.scale.set(34, 34 / tag.userData.aspect, 1); g.add(tag);
+    tagAll(g, { kind: 'gathering', id: p.id });
+    return g;
+  }
+  function applyPlaces(hubs, gatherings) {
+    const sig = JSON.stringify([hubs, gatherings]);
+    if (sig === placesSig) return;
+    placesSig = sig;
+    places.clear();
+    placePicks = [];
+    hubs.forEach((h) => places.add(hearth(h)));
+    // spread pins that share a spot so they don't overlap
+    const seen = {};
+    gatherings.forEach((p) => { const k = p.spotId; const n = (seen[k] = (seen[k] || 0) + 1) - 1; const q = { ...p, lat: p.lat + n * 0.0004, lon: p.lon + n * 0.0006 }; places.add(pin(q)); });
   }
 
   // ---------- avatar & spirit ----------
@@ -382,6 +427,8 @@ export function createMap3D({ onSelectVigil = () => {}, onMove = () => {} } = {}
   let avatarSig = '';
   function update(model) {
     applyVigils(model.vigils);
+    applyPlaces(model.hubs || [], model.gatherings || []);
+    Object.values(vigilObjs).forEach((o) => { o.g.visible = model.showVigils !== false; });
     const sig = JSON.stringify([model.avatar, model.spirit]);
     if (sig === avatarSig) return;
     avatarSig = sig;
@@ -454,12 +501,12 @@ export function createMap3D({ onSelectVigil = () => {}, onMove = () => {} } = {}
     if (!was || moved >= 6 || pointers.size) return;
     const r = canvas.getBoundingClientRect();
     ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), camera);
-    const hit = ray.intersectObjects(pickables, false).find((h) => h.object.visible && h.object.parent);
-    if (hit) { onSelectVigil(hit.object.userData.vigilId); return; }
+    const hit = ray.intersectObjects([...placePicks, ...pickables], true).find((h) => h.object.visible && h.object.parent && h.object.userData.pick);
+    if (hit) { onSelect(hit.object.userData.pick.kind, hit.object.userData.pick.id); return; }
     const p = new THREE.Vector3();
     if (ray.ray.intersectPlane(groundPlane, p)) {
       if (mode === 'demo') walkTarget = p.setY(0);
-      onSelectVigil(null);
+      onSelect(null, null);
     }
   };
   canvas.addEventListener('pointerup', end);
@@ -515,6 +562,7 @@ export function createMap3D({ onSelectVigil = () => {}, onMove = () => {} } = {}
       if (!reduced) { spirit.userData.core.rotation.y += dt * 1.4; spirit.userData.halo.rotation.z += dt * 0.8; }
     }
     if (!reduced) Object.values(vigilObjs).forEach((o, i) => { o.orb.rotation.y += dt; o.orb.position.y = 52 + Math.sin(t * 1.4 + i) * 1.5; });
+    if (!reduced) places.children.forEach((g, i) => { if (g.userData.flag) { g.userData.flag.rotation.y = Math.sin(t * 2 + i) * 0.3; g.userData.fire.scale.y = 1 + Math.sin(t * 9 + i) * 0.12; } });
     if (rainOn) {
       const a = rainGeo.attributes.position.array;
       for (let i = 0; i < RAIN_N; i++) { a[i * 3 + 1] -= 140 * dt; if (a[i * 3 + 1] < 0) a[i * 3 + 1] = 200; }
