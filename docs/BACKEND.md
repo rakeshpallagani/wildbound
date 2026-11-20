@@ -12,7 +12,7 @@ Wildbound runs fully offline, with demo clans simulated in your browser. Connect
 
 ## 2. Point the app at it
 Pick one:
-- **In the app:** go to Me (tap your name) → Settings → Backend, paste the **Project URL** and **anon public key**, then tap **Save & connect**. This is stored on that device only.
+- **In the app:** go to Me (tap your name) → Settings → Backend, paste the **Project URL** and the **publishable** key (`sb_publishable_…`, or the legacy **anon** key), then tap **Save & connect**. This is stored on that device only.
 - **For everyone:** put the same two values in [`config.js`](../config.js) and push. The anon key is designed to be public; the database rules control access.
 
 Then sign in with your email link (open it on the same phone) or as a guest.

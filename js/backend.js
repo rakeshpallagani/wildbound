@@ -5,7 +5,7 @@
 import { ACTIVITIES, SPOTS } from './data.js';
 import * as G from './engine.js';
 
-const SDK_URL = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js';
+const SDK_URL = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.57.4/dist/umd/supabase.js';
 const LS_KEY = 'wildbound:backend';
 
 export function readConfig() {

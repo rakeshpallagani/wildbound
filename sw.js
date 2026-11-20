@@ -1,5 +1,5 @@
 // Wildbound service worker: cache the app shell so it opens offline once installed to the home screen.
-const CACHE = 'wildbound-v6';
+const CACHE = 'wildbound-v7';
 const SHELL = ['./', 'index.html', 'css/styles.css', 'vendor/three.min.js', 'manifest.webmanifest', 'icons/icon.svg',
   'js/app.js', 'js/data.js', 'js/engine.js', 'js/geo.js', 'js/map3d.js', 'js/gmaps.js', 'js/tracker.js', 'js/store.js', 'js/sync.js', 'js/backend.js', 'config.js', 'icons/icon-192.png', 'icons/icon-512.png'];
 self.addEventListener('install', (e) => e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())));
