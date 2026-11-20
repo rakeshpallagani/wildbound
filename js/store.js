@@ -1,14 +1,14 @@
 // Persistence layer. Prototype uses localStorage; swap for a backend (Supabase/Firebase) later.
 import { newState } from './engine.js';
 
-const KEY = 'wildbound:v2';
+const KEY = 'wildbound:v3';
 
 export function load() {
   try {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const s = JSON.parse(raw);
-      if (s && s.version === 2) return s;
+      if (s && s.version === 3) return s;
     }
   } catch { /* storage unavailable or corrupt */ }
   return newState();
