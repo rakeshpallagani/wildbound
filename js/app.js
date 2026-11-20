@@ -1,32 +1,54 @@
-// Wildbound — UI layer (vanilla JS, no build step).
-import { ELEMENTS, ACTIVITIES, INTENSITY, EXPEDITIONS, BADGES } from './data.js';
+// Wildbound — UI layer (vanilla JS modules, no build step).
+import { ELEMENTS, ACTIVITIES, INTENSITY, EXPEDITIONS, BADGES, AWAKENING, POWERS, BUILDINGS, PLACES, HOME } from './data.js';
 import * as G from './engine.js';
 import * as store from './store.js';
+import { SOURCES, fetchRecent } from './sync.js';
+import { createWorld } from './world3d.js';
 
 const bind = {}; // per-tab event binders
 let state = store.load();
 let tab = 'home';
-let logDraft = { type: null, minutes: 30, distanceKm: '', intensity: 'moderate', note: '' };
+let ranksTab = 'clans';
+let onboardPick = null;
+let world;          // lazily created 3D world (null if WebGL is unavailable)
+let worldFailed = false;
+const freshDraft = () => ({ type: null, when: 'today', minutes: 30, distance: '', steps: '', elev: '', intensity: 'moderate', place: '', note: '' });
+let draft = freshDraft();
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const view = $('#view');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const fmtKm = (n) => (n >= 100 ? Math.round(n).toLocaleString() : (Math.round(n * 10) / 10).toLocaleString());
+const now = () => G.worldNow(state);
 
-// Two-step confirm inside the page (native dialogs are blocked in embedded viewers).
-function armConfirm(btn, label, action) {
-  if (btn.dataset.armed) { action(); return; }
-  const original = btn.textContent;
-  btn.dataset.armed = '1';
-  btn.textContent = label;
-  btn.classList.add('danger');
-  setTimeout(() => { if (btn.isConnected) { delete btn.dataset.armed; btn.textContent = original; btn.classList.remove('danger'); } }, 3500);
-}
+// ---------- units (Seattle default: miles / feet) ----------
+const imperial = () => (state.settings?.units || 'mi') === 'mi';
+const num = (n, d = 1) => (Math.round(n * 10 ** d) / 10 ** d).toLocaleString(undefined, { maximumFractionDigits: d });
+const dist = (km, d = 1) => (imperial() ? `${num(km / G.KM_PER_MI, d)} mi` : `${num(km, d)} km`);
+const distNum = (km, d = 1) => (imperial() ? num(km / G.KM_PER_MI, d) : num(km, d));
+const dUnit = () => (imperial() ? 'mi' : 'km');
+const elev = (m) => (imperial() ? `${Math.round(m * 3.28084).toLocaleString()} ft` : `${Math.round(m).toLocaleString()} m`);
+const eUnit = () => (imperial() ? 'ft' : 'm');
+const fmtDay = (d, opts = { weekday: 'short', month: 'short', day: 'numeric' }) => new Date(d).toLocaleDateString(undefined, opts);
+const fmtTime = (d) => new Date(d).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+const DAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+const SKINS = ['#f1c7a5', '#d9a37e', '#b97c55', '#8d5a3b', '#6b4430', '#e8b896'];
+const OUTFITS = ['#3f6f8f', '#7a4f9a', '#b5523b', '#3e7d57', '#c08a2e', '#2f3b52'];
+const hash = (s) => [...s].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
 
 function commit(events = []) {
   store.save(state);
   render();
   announce(events);
+}
+
+// Two-step confirm inside the page (native dialogs are blocked in embedded viewers).
+function armConfirm(btn, labelText, action) {
+  if (btn.dataset.armed) { action(); return; }
+  const original = btn.textContent;
+  btn.dataset.armed = '1';
+  btn.textContent = labelText;
+  btn.classList.add('danger');
+  setTimeout(() => { if (btn.isConnected) { delete btn.dataset.armed; btn.textContent = original; btn.classList.remove('danger'); } }, 3500);
 }
 
 // ---------- toasts ----------
@@ -38,49 +60,49 @@ function toast(html, kind = '') {
   const box = $('#toasts');
   box.appendChild(el);
   while (box.children.length > 3) box.firstElementChild.remove();
-  setTimeout(() => el.classList.add('out'), 4200);
-  setTimeout(() => el.remove(), 4800);
+  setTimeout(() => el.classList.add('out'), 4600);
+  setTimeout(() => el.remove(), 5200);
 }
 
 function announce(events) {
-  const loud = events.filter((e) => !e.quiet && e.type !== 'lore');
+  const out = [];
   const lore = events.filter((e) => e.type === 'lore' && !e.quiet).map((e) => e.waypoint.name);
-  if (lore.length) loud.push({ type: 'lore-batch', names: lore });
-  const order = { epic: 0, expedition: 0, evolve: 0, 'lore-batch': 1, badge: 2, logged: 3, trial: 4 };
-  loud.sort((a, b) => (order[a.type] ?? 5) - (order[b.type] ?? 5));
-  const trials = loud.filter((e) => e.type === 'trial');
-  if (trials.length > 1) {
-    loud.splice(loud.indexOf(trials[0]), trials.length, { type: 'trial-batch', n: trials.length, total: trials.reduce((s, t) => s + t.trial.reward, 0) });
-  }
-  for (const e of loud.slice(0, 3)) {
+  const trials = events.filter((e) => e.type === 'trial');
+  for (const e of events) {
+    if (e.quiet) continue;
     switch (e.type) {
-      case 'logged': toast(`+${e.entry.essence} essence · +${fmtKm(e.entry.trailKm)} trail km${e.entry.affinity ? ' <b>(affinity ×1.5)</b>' : ''}`); break;
-      case 'trial': toast(`✅ Trial complete: ${esc(e.trial.text)} <b>+${e.trial.reward}</b>`, 'good'); break;
-      case 'lore-batch': toast(e.names.length === 1 ? `📜 Lore unlocked: <b>${esc(e.names[0])}</b>` : `📜 ${e.names.length} lore entries unlocked: <b>${e.names.slice(-3).map(esc).join(', ')}</b>${e.names.length > 3 ? '…' : ''}`, 'lore'); break;
-      case 'trial-batch': toast(`✅ ${e.n} trials complete <b>+${e.total}</b>`, 'good'); break;
-      case 'expedition': toast(`🏔️ Expedition complete: <b>${esc(e.route.name)}</b>! +200 essence. Next: ${esc(e.next.name)}`, 'epic'); break;
-      case 'badge': toast(`${e.badge.icon} Badge earned: <b>${esc(e.badge.name)}</b>`, 'good'); break;
-      case 'evolve': {
-        const el = ELEMENTS[state.player.element];
-        toast(`✨ ${el.spirit.name} evolved into <b>${el.stages[e.stage]}</b> form!`, 'epic'); break;
-      }
+      case 'awaken': out.push([0, `⚡ <b>Your clan AWAKENED!</b> ${e.power.icon} ${esc(e.power.name)} is active for 2 weeks.${e.building ? ` A ${esc(e.building.name)} rises in camp.` : ''}`, 'epic']); break;
+      case 'journey': out.push([0, `🏔️ Journey complete: <b>${esc(e.route.name)}</b>! +200 essence. Next: ${esc(e.next.name)}`, 'epic']); break;
+      case 'evolve': { const el = ELEMENTS[state.player.element]; out.push([0, `✨ ${el.spirit.name} evolved into <b>${el.stages[e.stage]}</b> form!`, 'epic']); break; }
+      case 'tier': out.push([1, `🔥 Clan gauge <b>${e.tier.name}</b>: +${e.tier.reward} essence`, 'good']); break;
+      case 'badge': out.push([1, `${e.badge.icon} <b>${esc(e.badge.name)}</b> earned. New gear: ${esc(e.badge.gear)}`, 'good']); break;
+      case 'week': out.push([1, `📅 New week. Last week your clan reached ${Math.round(e.result.pct * 100)}%${e.result.awakened ? ' and awakened ⚡' : ''}.`, '']); break;
+      case 'logged': out.push([2, `+${e.entry.essence} essence · +${dist(e.entry.trailKm)} for the clan${e.entry.affinity ? ' <b>(affinity ×1.5)</b>' : ''}`, '']); break;
+      case 'imported': out.push([2, e.count ? `${SOURCES[e.source].name}: imported ${e.count} activit${e.count === 1 ? 'y' : 'ies'} (verified ×1.1)` : `${SOURCES[e.source].name}: you're up to date`, 'good']); break;
+      case 'checkin': out.push([1, `📍 Checked in at <b>${esc(e.place.name)}</b>: +60 essence`, 'good']); break;
+      case 'rally': out.push([2, '🔥 Rally sent. Sleepy kin are more likely to move today.', '']); break;
+      case 'cheer': out.push([3, `👏 +${G.CHEER_ESSENCE} essence for cheering`, '']); break;
     }
   }
+  if (lore.length) out.push([1, lore.length === 1 ? `📜 Lore unlocked: <b>${esc(lore[0])}</b>` : `📜 ${lore.length} lore entries unlocked`, 'lore']);
+  if (trials.length) out.push([2, trials.length === 1 ? `✅ Trial: ${esc(trials[0].trial.text)} <b>+${trials[0].trial.reward}</b>` : `✅ ${trials.length} trials complete <b>+${trials.reduce((s, t) => s + t.trial.reward, 0)}</b>`, 'good']);
+  out.sort((a, b) => a[0] - b[0]).slice(0, 3).reverse().forEach(([, html, kind]) => toast(html, kind));
 }
 
 // ---------- shell ----------
 
 function render() {
+  world?.unmount();
   document.body.dataset.element = state.player?.element || 'none';
   const nav = $('#tabs');
   nav.hidden = !state.player;
   nav.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   renderChip();
   if (!state.player) { view.innerHTML = onboardingView(); bindOnboarding(); return; }
-  const views = { home: homeView, log: logView, clan: clanView, expedition: expeditionView, codex: codexView, ranks: ranksView };
+  const views = { home: homeView, log: logView, clan: clanView, chat: chatView, journey: journeyView, ranks: ranksView, journal: journalView };
   view.innerHTML = views[tab]();
   bind[tab]?.();
-  window.scrollTo({ top: 0 });
+  if (tab !== 'chat') window.scrollTo({ top: 0 });
 }
 
 function renderChip() {
@@ -88,7 +110,8 @@ function renderChip() {
   if (!state.player) { chip.innerHTML = ''; return; }
   const el = ELEMENTS[state.player.element];
   const p = G.spiritProgress(G.totalEssence(state));
-  chip.innerHTML = `<span class="chip-glyph">${el.spirit.glyph}</span><span><b>${esc(state.player.name)}</b><small>${el.clanTitle} · Lv ${p.level}</small></span>`;
+  const offset = state.dayOffset ? `<span class="demo-pill" title="Days simulated in this prototype">Demo: ${fmtDay(now(), { weekday: 'short', month: 'short', day: 'numeric' })}</span>` : '';
+  chip.innerHTML = `${offset}<button class="chip-btn" data-go="journal" title="Your journal: gear, lore and settings"><span class="chip-glyph">${el.spirit.glyph}</span><span><b>${esc(state.player.name)}</b><small>${el.clanTitle} · Lv ${p.level}</small></span></button>`;
 }
 
 $('#tabs').addEventListener('click', (e) => {
@@ -97,20 +120,23 @@ $('#tabs').addEventListener('click', (e) => {
   tab = b.dataset.tab;
   render();
 });
+document.addEventListener('click', (e) => {
+  const go = e.target.closest('[data-go]');
+  if (go) { tab = go.dataset.go; render(); }
+});
 
 // ---------- onboarding ----------
-
-let onboardPick = null;
 
 function onboardingView() {
   return `
   <section class="hero">
-    <h1>Move together.<br/>Explore the world.</h1>
-    <p class="lead">We evolved walking, carrying, climbing and roaming as tribes. Wildbound turns every walk, lift, swim and match into progress for your clan on a journey along real trails, from the Inca Trail to the Appalachians. Every waypoint you reach unlocks a piece of the land's geography and history.</p>
+    <div class="eyebrow">Seattle · season one</div>
+    <h1>Move together.<br/>Awaken your clan.</h1>
+    <p class="lead">Humans evolved walking, carrying and climbing in tribes. In Wildbound, every walk, lift, swim and match charges your clan's spirit. When enough of your kin move each week, the clan <b>awakens a Power</b> that boosts everyone, raises a new building in your camp, and carries you further along real trails, from Discovery Park to the Wonderland Trail around Rainier.</p>
   </section>
   <section class="card">
     <h2>1 · Choose your element</h2>
-    <p class="muted">Your element spirit grows faster (×1.5 essence) when you practise its movements. Any movement counts.</p>
+    <p class="muted">Your spirit grows ×1.5 faster from its own movements, but every kind of movement counts for the clan.</p>
     <div class="element-grid">
       ${Object.values(ELEMENTS).map((el) => `
         <button class="element-card ${onboardPick === el.id ? 'picked' : ''}" data-el="${el.id}" style="--c:${el.color}">
@@ -119,6 +145,7 @@ function onboardingView() {
           <div class="element-spirit">${el.spirit.name}, the ${el.spirit.kind}</div>
           <p>${el.blurb}</p>
           <div class="affinity">${el.affinity.map((a) => `<span>${ACTIVITIES[a].icon} ${ACTIVITIES[a].label}</span>`).join('')}</div>
+          <div class="power-hint">${POWERS[el.id].icon} Clan power: <b>${POWERS[el.id].name}</b></div>
         </button>`).join('')}
     </div>
   </section>
@@ -143,199 +170,381 @@ function bindOnboarding() {
     e.preventDefault();
     if (!onboardPick) { $('#onboard-err').textContent = 'Choose an element first.'; return; }
     G.createPlayer(state, { name: $('#pname').value, element: onboardPick });
+    state.player.avatar = { outfit: OUTFITS[hash(state.player.name) % OUTFITS.length], skin: SKINS[1] };
     tab = 'clan';
     commit();
-    toast(`${ELEMENTS[onboardPick].spirit.glyph} ${ELEMENTS[onboardPick].spirit.name} has bound to you. Now find your clan.`, 'epic');
+    const sp = ELEMENTS[onboardPick].spirit;
+    toast(`${sp.glyph} ${sp.name} has bound to you. Now find your clan.`, 'epic');
   });
 }
 
-// ---------- home / camp ----------
+// ---------- shared pieces ----------
 
-function spiritCard() {
+function gauge(st, big = false) {
+  const ELS = ['earth', 'fire', 'water', 'air'];
+  let used = 0;
+  const segs = ELS.map((e) => {
+    const w = Math.max(0, Math.min(100 - used, (st.energy[e] / st.target) * 100));
+    used += w;
+    return w > 0 ? `<i style="width:${w}%;background:${ELEMENTS[e].color}" title="${ELEMENTS[e].name}: ${dist(st.energy[e])}"></i>` : '';
+  }).join('');
+  const marks = AWAKENING.tiers.map((t) => `<b class="mark" style="left:${t.at * 100}%" title="${t.name}"></b>`).join('');
+  return `<div class="gauge ${big ? 'big' : ''}">${segs}${marks}</div>`;
+}
+
+function tierPill(st) {
+  if (st.awakened) return '<span class="pill awakened">⚡ Awakened</span>';
+  if (st.tier) return `<span class="pill">${st.tier.name}</span>`;
+  return '<span class="pill dim">Dormant</span>';
+}
+
+function dayDots(days, todayIdx) {
+  return `<span class="dots">${DAYS.map((d, i) => `<i class="${days.includes(i) ? 'on' : ''} ${i === todayIdx ? 'today' : ''}" title="${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][i]}">${d}</i>`).join('')}</span>`;
+}
+
+function myWeek(clan) {
+  const days = clan?.week.days.me || [];
+  return { days, bonded: days.length >= AWAKENING.bondDays };
+}
+
+function daysLeftInWeek() { return 6 - G.weekdayIdx(now()); }
+
+// ---------- CAMP (3D) ----------
+
+function worldModel() {
+  const clan = G.playerClan(state);
+  const st = clan ? G.clanStatus(clan) : null;
   const el = ELEMENTS[state.player.element];
-  const ess = G.totalEssence(state);
-  const p = G.spiritProgress(ess);
-  const next = p.nextAt ? `${ess.toLocaleString()} / ${p.nextAt.toLocaleString()} essence to <b>${el.stages[p.stage + 1]}</b>` : 'Final form reached';
-  return `
-  <section class="card spirit" style="--c:${el.color}">
-    <div class="spirit-orb stage-${p.stage}"><span>${el.spirit.glyph}</span></div>
-    <div class="spirit-info">
-      <div class="eyebrow">${el.name} spirit · ${el.virtue}</div>
-      <h2>${el.spirit.name} <small>the ${el.stages[p.stage]}</small></h2>
-      <div class="bar"><i style="width:${Math.round(p.pct * 100)}%"></i></div>
-      <div class="muted small">${next}</div>
-      <div class="stages">${el.stages.map((s, i) => `<span class="${i <= p.stage ? 'on' : ''}">${s}</span>`).join('<em>›</em>')}</div>
-    </div>
-  </section>`;
+  const av = state.player.avatar || {};
+  const bondedIds = new Set(st ? st.bonded.map((m) => m.id) : []);
+  return {
+    player: {
+      name: state.player.name, element: state.player.element, elColor: clan ? ELEMENTS[clan.element].color : el.color,
+      color: av.outfit || OUTFITS[0], skin: av.skin || SKINS[1], gear: state.badges.filter((b) => b !== 'summit'), bonded: bondedIds.has('me'),
+    },
+    kin: clan ? clan.members.filter((m) => !m.isPlayer).map((m) => ({
+      name: m.name, color: OUTFITS[hash(m.name) % OUTFITS.length], skin: SKINS[hash(m.name + 's') % SKINS.length],
+      gear: ['kindred', ...(m.propensity > 0.6 ? ['first_steps'] : [])], elColor: ELEMENTS[clan.element].color, bonded: bondedIds.has(m.id),
+    })) : [],
+    buildings: clan ? clan.buildings : [],
+    banner: state.badges.includes('summit'),
+    clanColor: clan ? ELEMENTS[clan.element].color : el.color,
+    spiritStage: G.spiritProgress(G.totalEssence(state)).stage,
+    totem: st ? {
+      colors: Object.fromEntries(Object.keys(ELEMENTS).map((k) => [k, ELEMENTS[k].color])),
+      fill: Object.fromEntries(Object.keys(ELEMENTS).map((k) => [k, st.energy[k] / (st.target / 4)])),
+      pct: st.pct, awakened: st.awakened,
+    } : { colors: Object.fromEntries(Object.keys(ELEMENTS).map((k) => [k, ELEMENTS[k].color])), fill: { earth: 0, fire: 0, water: 0, air: 0 }, pct: 0, awakened: false },
+  };
 }
 
 function homeView() {
+  const el = ELEMENTS[state.player.element];
+  const clan = G.playerClan(state);
+  const st = clan ? G.clanStatus(clan) : null;
+  const ess = G.totalEssence(state);
+  const p = G.spiritProgress(ess);
   const trials = G.dailyTrials(state);
-  const s = G.streak(state);
-  const recent = state.activities.slice(0, 5);
+  const mw = myWeek(clan);
+  const power = G.activePower(clan, now());
   return `
-  ${spiritCard()}
-  <section class="card whisper"><span class="quote-mark">“</span>${esc(G.spiritWhisper(state))}</section>
-  <section class="stats">
-    <div><b>${s}</b><span>day streak</span></div>
-    <div><b>${fmtKm(G.totalTrailKm(state))}</b><span>trail km</span></div>
-    <div><b>${G.totalEssence(state).toLocaleString()}</b><span>essence</span></div>
-    <div><b>${state.unlockedLore.length}</b><span>lore found</span></div>
+  <section class="world-wrap">
+    <div id="world" class="world"></div>
+    <div class="hud tl"><span class="hud-pill">${el.spirit.glyph} ${el.spirit.name} · ${el.stages[p.stage]}</span>${clan ? `<span class="hud-pill">${tierPill(st)} ${Math.round(st.pct * 100)}%</span>` : ''}${power ? `<span class="hud-pill">${power.icon} ${esc(power.name)}</span>` : ''}</div>
+    <div class="hud tr">
+      <button class="icon-btn" id="rain-btn" title="Toggle Seattle rain">☔</button>
+      <button class="icon-btn" id="cam-btn" title="Reset view">⟲</button>
+      <button class="icon-btn" data-go="journal" title="Customize your wanderer">✎</button>
+    </div>
+    <div class="hud bl"><span class="hint">Drag to look · tap the ground to walk · W A S D</span></div>
+    <noscript>3D needs JavaScript.</noscript>
   </section>
-  <section class="card">
-    <div class="card-head"><h2>Today's trials</h2><button class="btn small primary" data-go="log">Log movement</button></div>
-    <ul class="trials">
-      ${trials.map((t) => `<li class="${t.claimed ? 'done' : ''}"><span class="check">${t.claimed ? '✓' : ''}</span>${esc(t.text)}<b>+${t.reward}</b></li>`).join('')}
+
+  ${clan ? `
+  <section class="card awaken-card">
+    <div class="card-head"><div><div class="eyebrow">This week · ${daysLeftInWeek()} day${daysLeftInWeek() === 1 ? '' : 's'} left</div><h2>Awaken ${esc(clan.name)}</h2></div>${tierPill(st)}</div>
+    ${gauge(st, true)}
+    <div class="row-between small"><span><b>${dist(st.charged)}</b> of ${dist(st.target)} charged</span><span><b>${st.bonded.length}/${st.bondNeeded}</b> kin Bonded</span></div>
+    ${st.awakened
+      ? `<p class="callout good">${st.power.icon} <b>${esc(st.power.name)}</b> is active: ${esc(st.power.effect)}.</p>`
+      : `<p class="callout">When the gauge is full <b>and</b> ${st.bondNeeded} kin are Bonded, the clan awakens <b>${st.power.icon} ${esc(st.power.name)}</b> (${esc(st.power.effect)}) and raises a new building in camp.</p>`}
+    <h3>Your part</h3>
+    <ul class="checklist">
+      <li class="${mw.bonded ? 'done' : ''}"><span class="check">${mw.bonded ? '✓' : ''}</span><span>Be Bonded: move on ${AWAKENING.bondDays} different days ${dayDots(mw.days, G.weekdayIdx(now()))}</span></li>
+      ${trials.map((t) => `<li class="${t.claimed ? 'done' : ''}"><span class="check">${t.claimed ? '✓' : ''}</span><span>${esc(t.text)}</span><b>+${t.reward}</b></li>`).join('')}
     </ul>
+    <div class="row gap"><button class="btn primary" data-go="log">Log movement</button><button class="btn" data-go="clan">Clan details</button><button class="btn" data-go="chat">Chat</button></div>
+  </section>` : `
+  <section class="card"><h2>You're on your own</h2><p class="muted">Your camp is empty. Join a clan to share a fire, charge a weekly Awakening together, and walk real trails.</p><button class="btn primary" data-go="clan">Find a clan</button></section>`}
+
+  <section class="card whisper"><span class="quote-mark">“</span>${esc(G.spiritWhisper(state))}</section>
+
+  <section class="card spirit-row" style="--c:${el.color}">
+    <div class="spirit-orb stage-${p.stage}"><span>${el.spirit.glyph}</span></div>
+    <div class="grow">
+      <div class="eyebrow">${el.name} spirit · ${el.virtue}</div>
+      <h2>${el.spirit.name} <small>the ${el.stages[p.stage]}</small></h2>
+      <div class="bar"><i style="width:${Math.round(p.pct * 100)}%"></i></div>
+      <div class="muted small">${p.nextAt ? `${ess.toLocaleString()} / ${p.nextAt.toLocaleString()} essence to <b>${el.stages[p.stage + 1]}</b>` : 'Final form reached'} · <span class="stages">${el.stages.map((s, i) => `<span class="${i <= p.stage ? 'on' : ''}">${s}</span>`).join(' › ')}</span></div>
+    </div>
   </section>
+
+  <section class="stats">
+    <div><b>${G.streak(state)}</b><span>day streak</span></div>
+    <div><b>${distNum(G.totalTrailKm(state))}</b><span>trail ${dUnit()}</span></div>
+    <div><b>${ess.toLocaleString()}</b><span>essence</span></div>
+    <div><b>${state.badges.length}</b><span>gear pieces</span></div>
+  </section>
+
   <section class="card">
     <h2>Recent movement</h2>
-    ${recent.length ? `<ul class="feed">${recent.map(activityRow).join('')}</ul>` : `<p class="muted">Nothing yet. Even a 10-minute walk wakes your spirit.</p>`}
+    ${state.activities.length ? `<ul class="feed">${state.activities.slice(0, 5).map(activityRow).join('')}</ul>` : '<p class="muted">Nothing yet. A 10-minute walk is enough to start your week.</p>'}
   </section>`;
 }
 
 function activityRow(a) {
   const act = ACTIVITIES[a.type];
-  const when = new Date(a.date);
+  const src = a.source && a.source !== 'manual' ? `<span class="src" style="--sc:${SOURCES[a.source]?.color}">${SOURCES[a.source]?.name || a.source} ✓</span>` : '';
   return `<li>
     <span class="feed-icon" style="--c:${ELEMENTS[a.element].color}">${act.icon}</span>
-    <span class="feed-main"><b>${act.label}</b> · ${a.minutes} min${a.distanceKm ? ` · ${a.distanceKm} km` : ''} <small>${INTENSITY[a.intensity].label}</small>
-      ${a.note ? `<em>${esc(a.note)}</em>` : ''}<small class="muted">${when.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</small></span>
-    <span class="feed-score">+${a.essence}<small>${fmtKm(a.trailKm)} km</small></span>
+    <span class="feed-main"><b>${act.label}</b> · ${a.minutes} min${a.distanceKm ? ` · ${dist(a.distanceKm)}` : ''}${a.elevM ? ` · ↑${elev(a.elevM)}` : ''} ${src}
+      ${a.place || a.note ? `<em>${esc([a.place, a.note].filter(Boolean).join(' · '))}</em>` : ''}<small class="muted">${fmtDay(a.date)} · ${fmtTime(a.date)}</small></span>
+    <span class="feed-score">+${a.essence}<small>${dist(a.trailKm)}</small></span>
   </li>`;
 }
 
-// ---------- log ----------
+bind.home = function () {
+  const host = $('#world');
+  if (!world && !worldFailed) { world = createWorld(); worldFailed = !world; if (world) { const m = new Date().getMonth(); world.setRain(m >= 9 || m <= 3); } }
+  if (!world) { host.innerHTML = '<div class="world-fallback">3D camp needs WebGL, which isn\'t available in this browser.</div>'; return; }
+  world.mount(host);
+  world.update(worldModel());
+  $('#rain-btn').classList.toggle('on', world.rain);
+  $('#rain-btn').addEventListener('click', (e) => { world.setRain(!world.rain); e.currentTarget.classList.toggle('on', world.rain); });
+  $('#cam-btn').addEventListener('click', () => world.resetCamera());
+};
+
+// ---------- LOG ----------
+
+function draftInput() {
+  const act = ACTIVITIES[draft.type];
+  const toKm = (v) => (Number(v) || 0) * (imperial() ? G.KM_PER_MI : 1);
+  const date = draft.when === 'yesterday' ? G.addDays(now(), -1) : now();
+  return {
+    type: draft.type, minutes: Number(draft.minutes) || 0, intensity: draft.intensity,
+    distanceKm: act?.distance ? toKm(draft.distance) : 0,
+    steps: act?.steps ? Number(draft.steps) || 0 : 0,
+    elevM: act?.elev ? (Number(draft.elev) || 0) / (imperial() ? 3.28084 : 1) : 0,
+    place: draft.place, note: draft.note, date: date.toISOString(), source: 'manual',
+  };
+}
+
+function impactPanel() {
+  if (!draft.type) return `<div class="impact empty"><h3>What this does</h3><p class="muted">Pick an activity to see exactly what it earns you, your spirit and your clan.</p></div>`;
+  const input = draftInput();
+  const clan = G.playerClan(state);
+  const power = G.activePower(clan, now());
+  const sc = G.scoreActivity(input, { element: state.player.element, power });
+  const el = ELEMENTS[state.player.element];
+  const ess = G.totalEssence(state);
+  const p = G.spiritProgress(ess + sc.essence);
+  const rows = [];
+  rows.push(`<li><span class="ic">${el.spirit.glyph}</span><span><b>+${sc.essence} essence</b> for ${el.spirit.name}${sc.affinity ? ' <span class="tag">affinity ×1.5</span>' : ''}${sc.verified ? ' <span class="tag">verified ×1.1</span>' : ''}${sc.boosted ? ` <span class="tag">${power.icon} power</span>` : ''}<small>${p.nextAt ? `${(ess + sc.essence).toLocaleString()} / ${p.nextAt.toLocaleString()} to ${el.stages[p.stage + 1]}` : 'Final form'}</small></span></li>`);
+  if (clan) {
+    const st = G.clanStatus(clan);
+    const after = Math.min(1, (st.charged + sc.trailKm) / st.target);
+    const ae = ELEMENTS[sc.element];
+    rows.push(`<li><span class="ic" style="color:${ae.color}">●</span><span><b>+${dist(sc.trailKm)} of ${ae.name} energy</b> for the clan gauge<small>${Math.round(st.pct * 100)}% → ${Math.round(after * 100)}%${!st.awakened && after >= 1 && !st.bondOk ? ' · full, but more kin must be Bonded' : ''}</small></span></li>`);
+    const mw = myWeek(clan);
+    const d = G.weekdayIdx(new Date(input.date));
+    const newDays = new Set([...mw.days, d]).size;
+    rows.push(`<li><span class="ic">🤝</span><span>${mw.bonded ? '<b>You\'re Bonded</b> this week' : newDays >= AWAKENING.bondDays ? '<b>Makes you Bonded</b> this week' : `<b>Day ${newDays} of ${AWAKENING.bondDays}</b> toward Bonded`}<small>Bonded kin are what let the clan awaken</small></span></li>`);
+    const route = G.getExpedition(clan.journeyId);
+    const pos = G.routePosition(route, clan.journeyKm);
+    if (pos.next) {
+      const left = pos.next.km - clan.journeyKm - sc.trailKm;
+      rows.push(`<li><span class="ic">🧭</span><span>${left <= 0 ? `<b>Reaches ${esc(pos.next.name)}</b> and unlocks its story` : `<b>${dist(left)} left</b> to ${esc(pos.next.name)}`}<small>${esc(route.name)}</small></span></li>`);
+    }
+  } else rows.push('<li><span class="ic">🔥</span><span>Join a clan to charge an Awakening with this.</span></li>');
+  const tr = G.previewTrials(state, { ...sc, type: input.type, intensity: input.intensity });
+  if (tr.length) rows.push(`<li><span class="ic">✅</span><span>Completes ${tr.map((t) => `<b>${esc(t.text)}</b> (+${t.reward})`).join(', ')}</span></li>`);
+  return `<div class="impact"><h3>What this does</h3><ul>${rows.join('')}</ul></div>`;
+}
 
 function logView() {
   const el = state.player.element;
-  const d = logDraft;
-  const act = d.type ? ACTIVITIES[d.type] : null;
-  let preview = '';
-  if (act) {
-    const sc = G.scoreActivity(d, el);
-    preview = `<div class="preview">Preview: <b>+${sc.essence} essence</b> · <b>+${fmtKm(sc.trailKm)} trail km</b> for your clan ${sc.affinity ? '<span class="tag">affinity ×1.5</span>' : ''}</div>`;
-  }
+  const act = draft.type ? ACTIVITIES[draft.type] : null;
+  const conn = state.connections || {};
   return `
   <section class="card">
-    <h2>Log movement</h2>
-    <p class="muted">Every kind of movement counts. Distance activities move your clan by real km. Strength, sport and yoga convert effort minutes into trail km.</p>
-    <div class="activity-grid">
-      ${Object.entries(ACTIVITIES).map(([id, a]) => `
-        <button class="act ${d.type === id ? 'picked' : ''} ${a.element === el ? 'aff' : ''}" data-act="${id}" style="--c:${ELEMENTS[a.element].color}">
-          <span>${a.icon}</span>${a.label}${a.element === el ? '<i>×1.5</i>' : ''}
-        </button>`).join('')}
+    <div class="card-head"><div><h2>Sync automatically</h2><p class="muted small">Connect once and your workouts arrive on their own. Synced activities are verified and earn ×1.1 essence.</p></div></div>
+    <div class="sources">
+      ${Object.entries(SOURCES).map(([id, s]) => {
+        const c = conn[id];
+        return `<div class="source ${c ? 'on' : ''}" style="--sc:${s.color}">
+          <span class="src-logo">${s.glyph}</span>
+          <div class="grow"><b>${s.name}</b><small>${c ? `Connected · synced ${fmtTime(c.lastSync)}` : s.platform}</small></div>
+          ${c ? `<button class="btn small" data-sync="${id}">Sync now</button><button class="btn small ghost" data-disc="${id}" title="Disconnect">✕</button>` : `<button class="btn small primary" data-connect="${id}">Connect</button>`}
+        </div>`;
+      }).join('')}
     </div>
-    <form id="log-form" class="log-form ${act ? '' : 'disabled'}">
-      <label>Minutes<input type="number" name="minutes" min="1" max="${G.MAX_MINUTES}" value="${esc(d.minutes)}" required /></label>
-      ${act?.distance ? `<label>Distance (km)<input type="number" name="distanceKm" min="0" max="300" step="0.1" value="${esc(d.distanceKm)}" placeholder="optional" /></label>` : ''}
-      <fieldset class="intensity"><legend>Intensity</legend>
-        ${Object.entries(INTENSITY).map(([k, v]) => `<label><input type="radio" name="intensity" value="${k}" ${d.intensity === k ? 'checked' : ''}/>${v.label}</label>`).join('')}
-      </fieldset>
-      <label class="wide">Note<input name="note" maxlength="140" value="${esc(d.note)}" placeholder="Where did you go? What did you see?" /></label>
-      ${preview}
-      <button class="btn primary wide" type="submit" ${act ? '' : 'disabled'}>${act ? `Offer ${act.label.toLowerCase()} to ${ELEMENTS[el].spirit.name}` : 'Pick an activity'}</button>
-    </form>
-    <p class="muted small">Prototype note: entries are self-reported. The roadmap adds Apple Health, Health Connect and Strava sync.</p>
-  </section>`;
+    <p class="muted small">Prototype: Connect imports sample Seattle workouts so you can try the flow. Real sync is planned in docs/INTEGRATIONS.md (Strava OAuth, HealthKit in the iOS app, Health Connect on Android).</p>
+  </section>
+
+  <div class="log-layout">
+    <section class="card">
+      <h2>Or log it yourself</h2>
+      <div class="activity-grid">
+        ${Object.entries(ACTIVITIES).map(([id, a]) => `
+          <button class="act ${draft.type === id ? 'picked' : ''}" data-act="${id}" style="--c:${ELEMENTS[a.element].color}">
+            <span>${a.icon}</span>${a.label}${a.element === el ? '<i>×1.5</i>' : ''}
+          </button>`).join('')}
+      </div>
+      <form id="log-form" class="log-form ${act ? '' : 'disabled'}" autocomplete="off">
+        <fieldset class="chips wide"><legend>When</legend>
+          ${['today', 'yesterday'].map((w) => `<label><input type="radio" name="when" value="${w}" ${draft.when === w ? 'checked' : ''}/><span>${w === 'today' ? 'Today' : 'Yesterday'}</span></label>`).join('')}
+        </fieldset>
+        <label>Duration (min)<input id="f-min" type="number" name="minutes" min="1" max="${G.MAX_MINUTES}" value="${esc(draft.minutes)}" required /></label>
+        ${act?.distance ? `<label>Distance (${dUnit()})<input id="f-dist" type="number" name="distance" min="0" step="0.1" value="${esc(draft.distance)}" placeholder="optional" /></label>` : ''}
+        ${act?.steps ? `<label>Steps<input id="f-steps" type="number" name="steps" min="0" step="100" value="${esc(draft.steps)}" placeholder="if no distance" /></label>` : ''}
+        ${act?.elev ? `<label>Elevation gain (${eUnit()})<input id="f-elev" type="number" name="elev" min="0" step="10" value="${esc(draft.elev)}" placeholder="optional" /></label>` : ''}
+        <fieldset class="chips wide"><legend>Effort</legend>
+          ${Object.entries(INTENSITY).map(([k, v]) => `<label><input type="radio" name="intensity" value="${k}" ${draft.intensity === k ? 'checked' : ''}/><span>${v.label} <small>${v.hint}</small></span></label>`).join('')}
+        </fieldset>
+        <label class="wide">Where<input id="f-place" name="place" list="places" maxlength="60" value="${esc(draft.place)}" placeholder="e.g. Green Lake, Discovery Park, home gym" /></label>
+        <datalist id="places">${PLACES.map((p) => `<option value="${esc(p.name)}">`).join('')}<option value="Burke-Gilman Trail"><option value="Rattlesnake Ledge"><option value="Mount Si"><option value="Home gym"></datalist>
+        <label class="wide">Note<input id="f-note" name="note" maxlength="140" value="${esc(draft.note)}" placeholder="What did you see?" /></label>
+        <button class="btn primary wide" type="submit" ${act ? '' : 'disabled'}>${act ? `Log ${act.label.toLowerCase()}` : 'Pick an activity'}</button>
+      </form>
+    </section>
+    <aside class="card impact-card" id="impact">${impactPanel()}</aside>
+  </div>`;
 }
 
 bind.log = function () {
-  view.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => { logDraft.type = b.dataset.act; render(); }));
+  view.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => { sync(); draft.type = b.dataset.act; render(); }));
   const form = $('#log-form');
-  const sync = () => {
+  function sync() {
     const fd = new FormData(form);
-    logDraft.minutes = fd.get('minutes');
-    logDraft.distanceKm = fd.get('distanceKm') ?? '';
-    logDraft.intensity = fd.get('intensity') || 'moderate';
-    logDraft.note = fd.get('note') || '';
-  };
-  form.addEventListener('change', () => {
-    sync();
-    const p = view.querySelector('.preview');
-    if (p && logDraft.type) {
-      const sc = G.scoreActivity(logDraft, state.player.element);
-      p.innerHTML = `Preview: <b>+${sc.essence} essence</b> · <b>+${fmtKm(sc.trailKm)} trail km</b> for your clan ${sc.affinity ? '<span class="tag">affinity ×1.5</span>' : ''}`;
-    }
-  });
+    for (const k of ['when', 'minutes', 'distance', 'steps', 'elev', 'intensity', 'place', 'note']) if (fd.has(k)) draft[k] = fd.get(k);
+  }
+  const refresh = () => { sync(); $('#impact').innerHTML = impactPanel(); };
+  form.addEventListener('input', refresh);
+  form.addEventListener('change', refresh);
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     sync();
     try {
-      const events = G.logActivity(state, logDraft);
-      logDraft = { type: null, minutes: 30, distanceKm: '', intensity: 'moderate', note: '' };
+      const events = G.logActivity(state, draftInput());
+      draft = freshDraft();
       tab = 'home';
       commit(events);
     } catch (err) { toast(esc(err.message), 'bad'); }
   });
+  view.querySelectorAll('[data-connect],[data-sync]').forEach((b) => b.addEventListener('click', () => {
+    const src = b.dataset.connect || b.dataset.sync;
+    b.disabled = true;
+    b.textContent = b.dataset.connect ? 'Connecting…' : 'Syncing…';
+    setTimeout(() => commit(G.importActivities(state, src, fetchRecent(src, now()))), 700);
+  }));
+  view.querySelectorAll('[data-disc]').forEach((b) => b.addEventListener('click', () => { G.disconnect(state, b.dataset.disc); commit(); }));
 };
 
-// ---------- clan ----------
+// ---------- CLAN ----------
 
 function clanView() {
   const clan = G.playerClan(state);
   if (!clan) return clanPickerView();
   const el = ELEMENTS[clan.element];
-  const route = G.getExpedition(clan.expeditionId);
-  const pos = G.routePosition(route, clan.progressKm);
-  const pct = Math.round((clan.progressKm / route.lengthKm) * 100);
-  const members = [...clan.members].sort((a, b) => b.km - a.km);
-  const top = members[0]?.km || 1;
+  const st = G.clanStatus(clan);
+  const power = G.activePower(clan, now());
+  const kin = G.kinStats(clan);
+  const today = G.weekdayIdx(now());
+  const share = (e) => (st.charged ? Math.round((st.energy[e] / st.charged) * 100) : 0);
   return `
   <section class="card clan-banner" style="--c:${el.color}">
     <div class="clan-sigil">${el.spirit.glyph}</div>
-    <div>
-      <div class="eyebrow">${el.name} clan · ${el.clanTitle}s</div>
+    <div class="grow">
+      <div class="eyebrow">${el.name} clan · ${clan.members.length} kin · ${clan.awakenings} awakening${clan.awakenings === 1 ? '' : 's'}</div>
       <h2>${esc(clan.name)}</h2>
       <p class="motto">“${esc(clan.motto)}”</p>
     </div>
+    ${power ? `<div class="power-badge" title="${esc(power.effect)}">${power.icon}<b>${esc(power.name)}</b><small>until ${fmtDay(G.fromKey(clan.power.until), { month: 'short', day: 'numeric' })}</small></div>` : ''}
   </section>
+
   <section class="card">
-    <div class="card-head"><h2>Clan objective</h2><button class="btn small" data-go="expedition">View map</button></div>
-    <p><b>${route.name}</b> <span class="muted">· ${route.region}</span></p>
-    <div class="bar big"><i style="width:${pct}%"></i></div>
-    <div class="row-between small"><span>${fmtKm(clan.progressKm)} / ${fmtKm(route.lengthKm)} km</span><span>${pos.next ? `Next: <b>${esc(pos.next.name)}</b> in ${fmtKm(pos.next.km - clan.progressKm)} km` : 'Arrived!'}</span></div>
-    <p class="muted small">Reward on completion: +200 essence for every member, the Summit Seeker badge, and the next expedition unlocks.</p>
-    ${clan.completed.length ? `<p class="small">Completed: ${clan.completed.map((c) => G.getExpedition(c.routeId).name).map(esc).join(', ')}</p>` : ''}
+    <div class="card-head"><div><div class="eyebrow">Weekly Awakening · resets Monday · ${daysLeftInWeek()} day${daysLeftInWeek() === 1 ? '' : 's'} left</div><h2>Charge the clan spirit</h2></div>${tierPill(st)}</div>
+    ${gauge(st, true)}
+    <div class="row-between small"><span><b>${dist(st.charged)}</b> / ${dist(st.target)} (${dist(AWAKENING.targetKmPerMember, 0)} per member)</span><span>${Math.round(st.pct * 100)}%</span></div>
+    ${clan.history[0] ? `<p class="muted small">Last week: ${Math.round(clan.history[0].pct * 100)}% charged, ${clan.history[0].bonded}/${clan.history[0].members} Bonded, ${clan.history[0].awakened ? '<b>awakened ⚡</b>' : 'did not awaken'} · ranked #${clan.history[0].rank}</p>` : ''}
+    <div class="tiers">
+      ${AWAKENING.tiers.map((t) => {
+        const done = st.awakened || (t.id !== 'awakened' && st.pct >= t.at);
+        return `<div class="tier ${done ? 'done' : ''}"><b>${done ? '✓ ' : ''}${t.name}</b><small>${t.id === 'awakened' ? `100% + ${st.bondNeeded} Bonded` : `${Math.round(t.at * 100)}%`}</small><span>${t.desc}</span></div>`;
+      }).join('')}
+    </div>
+    <div class="energy-legend">${['earth', 'fire', 'water', 'air'].map((e) => `<span style="--c:${ELEMENTS[e].color}"><i></i>${ELEMENTS[e].name} ${dist(st.energy[e])} · ${share(e)}%</span>`).join('')}</div>
+    <p class="callout">${st.awakened ? `Awakened this week with <b>${st.power.icon} ${esc(st.power.name)}</b>.` : `Leading energy decides the Power. Right now: <b>${st.power.icon} ${esc(st.power.name)}</b> (${esc(st.power.effect)}). Mix all four elements with none above 40% to awaken <b>Elemental Convergence</b>.`}</p>
   </section>
+
   <section class="card">
-    <h2>Kin <small class="muted">(${members.length})</small></h2>
-    <ul class="members">
-      ${members.map((m, i) => `<li class="${m.isPlayer ? 'me' : ''}"><span class="rank">${i + 1}</span><span class="mname">${esc(m.name)}${m.isPlayer ? ' (you)' : ''}</span><span class="mbar"><i style="width:${Math.round((m.km / top) * 100)}%"></i></span><b>${fmtKm(m.km)} km</b></li>`).join('')}
+    <div class="card-head"><h2>Kin this week</h2><span class="small"><b>${st.bonded.length}</b> / ${st.bondNeeded} Bonded needed</span></div>
+    <p class="muted small">A member is <b>Bonded</b> after moving on ${AWAKENING.bondDays} different days. The clan can't awaken unless ${Math.round(AWAKENING.bondShare * 100)}% of its kin are Bonded, so every member matters, not just the fastest.</p>
+    <ul class="kin">
+      ${kin.map((k) => `<li class="${k.member.isPlayer ? 'me' : ''}">
+        <span class="kin-dot" style="background:${ELEMENTS[k.member.element].color}" title="${ELEMENTS[k.member.element].name}"></span>
+        <span class="kin-name">${esc(k.member.name)}${k.member.isPlayer ? ' (you)' : ''}</span>
+        ${dayDots(k.days, today)}
+        <span class="kin-km">${dist(k.km)}</span>
+        ${k.bonded ? '<span class="pill ok">Bonded</span>' : `<span class="pill dim">${AWAKENING.bondDays - k.days.length} day${AWAKENING.bondDays - k.days.length === 1 ? '' : 's'} to go</span>`}
+      </li>`).join('')}
     </ul>
     <div class="row gap">
+      <button class="btn" data-go="chat">💬 Rally in chat</button>
+      <button class="btn" id="sim" title="Prototype: other members move today, then the clock moves forward one day">⏩ Simulate a day</button>
       <button class="btn" id="invite">Invite friends</button>
-      <button class="btn" id="sim" title="Prototype: simulate the other members' movement for one day">⏩ Simulate a day</button>
-      <button class="btn ghost" id="leave">Leave clan</button>
     </div>
-    <p class="muted small">Other members are simulated in this prototype, to show how shared progress feels.</p>
+    <p class="muted small">Prototype: other members are simulated. "Simulate a day" lets them move and advances the demo clock, so you can watch a week play out.</p>
+  </section>
+
+  <section class="card">
+    <h2>Camp buildings</h2>
+    <p class="muted small">Each Awakening raises the next building in your 3D camp.</p>
+    <div class="buildings">${BUILDINGS.map((b) => `<div class="building ${clan.buildings.includes(b.id) ? 'built' : ''}"><b>${clan.buildings.includes(b.id) ? '🏛️' : '🔒'} ${b.name}</b><small>${b.desc}</small></div>`).join('')}</div>
+  </section>
+
+  <section class="card">
+    <h2>Clan Powers</h2>
+    <div class="powers">${Object.values(POWERS).map((p) => `<div class="power ${st.dominant === p.id ? 'lead' : ''}"><span>${p.icon}</span><div><b>${p.name}</b><small>${p.effect}</small></div></div>`).join('')}</div>
+    <div class="row gap"><button class="btn ghost" id="leave">Leave clan</button></div>
   </section>`;
 }
 
 function clanPickerView() {
   const mine = state.player.element;
-  const clans = [...state.clans].sort((a, b) => (b.element === mine) - (a.element === mine));
+  const ranks = G.weeklyRanks(state);
+  const sorted = [...ranks].sort((a, b) => (b.clan.element === mine) - (a.clan.element === mine));
   return `
   <section class="card">
-    <h2>Find your clan</h2>
-    <p class="muted">A clan is a group of people moving toward one shared expedition. Kin of your element are listed first, but every clan welcomes every element.</p>
+    <h2>Find your Seattle clan</h2>
+    <p class="muted">A clan charges one weekly Awakening and walks one journey together. Kin of your element are listed first, but every clan welcomes every element.</p>
     <div class="clan-list">
-      ${clans.map((c) => {
+      ${sorted.map(({ clan: c, st }) => {
         const el = ELEMENTS[c.element];
-        const route = G.getExpedition(c.expeditionId);
         return `<div class="clan-row" style="--c:${el.color}">
           <span class="clan-sigil sm">${el.spirit.glyph}</span>
-          <div class="grow"><b>${esc(c.name)}</b> ${c.element === mine ? '<span class="tag">your element</span>' : ''}<div class="muted small">“${esc(c.motto)}” · ${c.members.length} kin · on ${route.name}</div></div>
+          <div class="grow"><b>${esc(c.name)}</b> ${c.element === mine ? '<span class="tag">your element</span>' : ''}
+            <div class="muted small">“${esc(c.motto)}” · ${c.members.length} kin · ${c.awakenings} awakenings · this week ${Math.round(st.pct * 100)}%</div></div>
           <button class="btn small primary" data-join="${c.id}">Join</button>
         </div>`;
       }).join('')}
     </div>
   </section>
   <section class="card">
-    <h2>…or found a new clan</h2>
+    <h2>Or found a new clan</h2>
     <form id="found-form" class="stack">
-      <input name="name" maxlength="32" placeholder="Clan name, e.g. The Ridge Runners" required />
-      <input name="motto" maxlength="60" placeholder="Motto (optional)" />
+      <input id="clan-name" name="name" maxlength="32" placeholder="Clan name, e.g. Ballard Ridge Runners" required />
+      <input id="clan-motto" name="motto" maxlength="60" placeholder="Motto (optional)" />
       <button class="btn primary" type="submit">Light the fire 🔥</button>
     </form>
   </section>`;
@@ -345,27 +554,73 @@ bind.clan = function () {
   view.querySelectorAll('[data-join]').forEach((b) => b.addEventListener('click', () => {
     const events = G.joinClan(state, b.dataset.join);
     commit(events);
-    toast(`🔥 You joined <b>${esc(G.playerClan(state).name)}</b>.`, 'good');
+    toast(`🔥 You joined <b>${esc(G.playerClan(state).name)}</b>. Move on ${AWAKENING.bondDays} days this week to become Bonded.`, 'good');
   }));
   $('#found-form')?.addEventListener('submit', (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    try { commit(G.foundClan(state, { name: fd.get('name'), motto: fd.get('motto') })); toast('🔥 Your clan fire is lit. Two wanderers have answered the call.', 'epic'); }
+    try { commit(G.foundClan(state, { name: fd.get('name'), motto: fd.get('motto') })); toast('🔥 Your clan fire is lit. Two wanderers answered the call.', 'epic'); }
     catch (err) { toast(esc(err.message), 'bad'); }
   });
   $('#leave')?.addEventListener('click', (e) => armConfirm(e.currentTarget, 'Tap again to leave', () => { G.leaveClan(state); commit(); }));
-  $('#sim')?.addEventListener('click', () => { const ev = G.simulateDay(state); commit(ev); toast('⏩ A day passes. Your kin moved too.'); });
+  $('#sim')?.addEventListener('click', () => { const ev = G.simulateDay(state); commit(ev); toast(`⏩ A day passes. It's now ${fmtDay(now())}.`); });
   $('#invite')?.addEventListener('click', async () => {
-    const text = `Join my clan "${G.playerClan(state).name}" on Wildbound: move together, explore the world.`;
-    try { await navigator.clipboard.writeText(`${text} ${location.href}`); toast('Invite copied to clipboard.'); }
-    catch { toast('Sharing comes with the multiplayer backend (see roadmap).'); }
+    const text = `Join my clan "${G.playerClan(state).name}" on Wildbound. Move together, awaken together.`;
+    try { await navigator.clipboard.writeText(text); toast('Invite text copied.'); }
+    catch { toast('Invites arrive with the multiplayer backend (see roadmap).'); }
   });
 };
 
-// ---------- expedition ----------
+// ---------- CHAT ----------
+
+function chatView() {
+  const clan = G.playerClan(state);
+  if (!clan) return '<section class="card"><h2>Clan chat</h2><p class="muted">Join a clan to talk with your kin.</p><button class="btn primary" data-go="clan">Find a clan</button></section>';
+  const st = G.clanStatus(clan);
+  const msgs = state.chat[clan.id] || [];
+  const rallied = state.rallyDay === G.dayKey(now());
+  let lastDay = '';
+  const items = msgs.map((m) => {
+    const day = G.dayKey(new Date(m.ts));
+    const sep = day !== lastDay ? `<li class="day-sep"><span>${fmtDay(m.ts)}</span></li>` : '';
+    lastDay = day;
+    if (m.kind === 'system') return `${sep}<li class="sys"><span>${esc(m.text)}</span></li>`;
+    const mine = m.from?.isPlayer;
+    const who = m.from ? `<span class="who" style="color:${ELEMENTS[m.from.element]?.color}">${esc(m.from.name)}</span>` : '';
+    if (m.kind === 'activity') {
+      const a = m.act;
+      return `${sep}<li class="msg act-card ${mine ? 'mine' : ''}">${who}<div class="bubble"><span class="feed-icon" style="--c:${ELEMENTS[a.element].color}">${a.icon}</span><span><b>${a.label}</b> · ${a.minutes} min${a.place ? ` · ${esc(a.place)}` : ''}<small>+${dist(a.km)} of ${ELEMENTS[a.element].name} energy</small></span>
+        <button class="cheer ${m.cheered ? 'on' : ''}" data-cheer="${m.id}" ${mine || m.cheered ? 'disabled' : ''} title="Cheer (+${G.CHEER_ESSENCE} essence)">👏 ${m.cheers || ''}</button></div><time>${fmtTime(m.ts)}</time></li>`;
+    }
+    return `${sep}<li class="msg ${mine ? 'mine' : ''} ${m.kind === 'rally' ? 'rally' : ''}">${mine ? '' : who}<div class="bubble">${esc(m.text)}</div><time>${fmtTime(m.ts)}</time></li>`;
+  }).join('');
+  return `
+  <section class="card chat-card">
+    <div class="chat-head">
+      <div class="grow"><b>${ELEMENTS[clan.element].spirit.glyph} ${esc(clan.name)}</b><small class="muted">${clan.members.length} kin · gauge ${Math.round(st.pct * 100)}% · ${st.bonded.length}/${st.bondNeeded} Bonded</small></div>
+      <button class="btn small ${rallied ? '' : 'primary'}" id="rally" ${rallied ? 'disabled' : ''} title="Once a day. Sleepy kin become much more likely to move today.">${rallied ? 'Rallied today' : '🔥 Rally the clan'}</button>
+    </div>
+    <ul class="chat" id="chat-list">${items || '<li class="sys"><span>No messages yet. Say hi!</span></li>'}</ul>
+    <div class="quick">${['Who\'s up for a walk tonight?', 'Rainy run anyone? ☔', 'Planning a hike this weekend', 'Feeling tired today'].map((q) => `<button class="chip" data-quick="${esc(q)}">${esc(q)}</button>`).join('')}</div>
+    <form id="chat-form" class="composer"><input id="chat-input" maxlength="280" placeholder="Message ${esc(clan.name)}…" autocomplete="off" /><button class="btn primary" type="submit">Send</button></form>
+  </section>
+  <p class="muted small center">Prototype: clanmates are simulated and reply automatically. Real-time chat comes with the backend (see roadmap).</p>`;
+}
+
+bind.chat = function () {
+  const list = $('#chat-list');
+  if (list) list.scrollTop = list.scrollHeight;
+  const send = (text) => { if (!text.trim()) return; commit(G.postMessage(state, text)); setTimeout(() => $('#chat-input')?.focus(), 0); };
+  $('#chat-form')?.addEventListener('submit', (e) => { e.preventDefault(); send($('#chat-input').value); });
+  view.querySelectorAll('[data-quick]').forEach((b) => b.addEventListener('click', () => send(b.dataset.quick)));
+  view.querySelectorAll('[data-cheer]').forEach((b) => b.addEventListener('click', () => commit(G.cheer(state, b.dataset.cheer))));
+  $('#rally')?.addEventListener('click', () => { try { commit(G.rally(state)); } catch (err) { toast(esc(err.message), 'bad'); } });
+};
+
+// ---------- JOURNEY ----------
 
 function routeMap(route, km, color) {
-  const W = 640, H = 360, P = 40;
+  const W = 640, H = 340, P = 46;
   const wps = route.waypoints;
   const midLat = wps.reduce((s, w) => s + w.lat, 0) / wps.length;
   const kx = Math.cos((midLat * Math.PI) / 180);
@@ -377,139 +632,200 @@ function routeMap(route, km, color) {
   const pts = wps.map((w) => proj(w.lat, w.lon));
   const pos = G.routePosition(route, km);
   const [cx, cy] = proj(pos.lat, pos.lon);
-  // walked portion
-  const walked = [];
-  for (let i = 0; i < wps.length; i++) { if (wps[i].km <= km) walked.push(pts[i]); }
-  walked.push([cx, cy]);
+  const walked = pts.filter((_, i) => wps[i].km <= km).concat([[cx, cy]]);
   const line = (arr) => arr.map((p) => p.map((n) => n.toFixed(1)).join(',')).join(' ');
   return `
   <svg class="map" viewBox="0 0 ${W} ${H}" role="img" aria-label="Stylised map of ${esc(route.name)}">
-    <defs><pattern id="topo" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M0 12 Q6 6 12 12 T24 12" fill="none" stroke="currentColor" stroke-opacity=".06"/></pattern></defs>
-    <rect width="${W}" height="${H}" rx="14" fill="url(#topo)"/>
     <polyline points="${line(pts)}" class="route-all"/>
     <polyline points="${line(walked)}" class="route-done" style="stroke:${color}"/>
     ${pts.map(([x, y], i) => {
       const reached = wps[i].km <= km;
-      const anchor = x > W * 0.7 ? 'end' : 'start';
+      const anchor = x > W * 0.62 ? 'end' : 'start';
       const dx = anchor === 'end' ? -10 : 10;
-      return `<g class="wp ${reached ? 'reached' : ''}"><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${i === 0 || i === wps.length - 1 ? 7 : 5}" style="${reached ? `fill:${color}` : ''}"/>
-        <text x="${(x + dx).toFixed(1)}" y="${(y - 8).toFixed(1)}" text-anchor="${anchor}">${esc(wps[i].name.split(' · ')[0])}</text></g>`;
+      const isNext = pos.nextIdx === i;
+      return `<g class="wp ${reached ? 'reached' : ''} ${isNext ? 'next' : ''}"><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${isNext ? 8 : 6}" style="${reached ? `fill:${color}` : ''}"/>
+        <text x="${(x + dx).toFixed(1)}" y="${(y + 4).toFixed(1)}" text-anchor="${anchor}">${i + 1}. ${esc(wps[i].name.split(' · ')[0])}</text></g>`;
     }).join('')}
-    <g class="you"><circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="13" style="fill:${color}" class="pulse"/><text x="${cx.toFixed(1)}" y="${(cy + 5).toFixed(1)}" text-anchor="middle">${ELEMENTS[state.player.element].spirit.glyph}</text></g>
+    <g class="you"><circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="14" style="fill:${color}" class="pulse"/><text x="${cx.toFixed(1)}" y="${(cy + 5).toFixed(1)}" text-anchor="middle">${ELEMENTS[state.player.element].spirit.glyph}</text></g>
   </svg>`;
 }
 
-function elevationProfile(route, km, color) {
-  const wps = route.waypoints;
-  const W = 640, H = 110, P = 8;
-  const maxE = Math.max(...wps.map((w) => w.elev)), minE = Math.min(...wps.map((w) => w.elev));
-  const x = (k) => P + (k / route.lengthKm) * (W - 2 * P);
-  const y = (e) => H - P - ((e - minE) / (maxE - minE || 1)) * (H - 2 * P - 14);
-  const d = wps.map((w, i) => `${i ? 'L' : 'M'}${x(w.km).toFixed(1)},${y(w.elev).toFixed(1)}`).join(' ');
-  return `<svg class="elev" viewBox="0 0 ${W} ${H}" aria-label="Elevation profile">
-    <path d="${d} L${x(route.lengthKm)},${H} L${x(0)},${H} Z" class="elev-fill"/>
-    <path d="${d}" class="elev-line"/>
-    <line x1="${x(km)}" x2="${x(km)}" y1="0" y2="${H}" style="stroke:${color}" class="elev-you"/>
-    <text x="${W - P}" y="12" text-anchor="end">${minE.toLocaleString()}–${maxE.toLocaleString()} m</text>
-  </svg>`;
-}
-
-function expeditionView() {
+function journeyView() {
   const clan = G.playerClan(state);
-  if (!clan) return `<section class="card"><h2>No expedition yet</h2><p class="muted">Expeditions are clan objectives. Join or found a clan to set out.</p><button class="btn primary" data-go="clan">Find a clan</button></section>`;
-  const route = G.getExpedition(clan.expeditionId);
+  if (!clan) return '<section class="card"><h2>No journey yet</h2><p class="muted">Journeys are shared by a clan. Join or found one to set out from Discovery Park.</p><button class="btn primary" data-go="clan">Find a clan</button></section>';
+  const route = G.getExpedition(clan.journeyId);
   const color = ELEMENTS[clan.element].color;
+  const pos = G.routePosition(route, clan.journeyKm);
+  const pct = Math.round((clan.journeyKm / route.lengthKm) * 100);
+  const doneIds = new Set(clan.completed.map((c) => c.routeId));
+  const myKm = clan.members.find((m) => m.isPlayer)?.totalKm || 0;
   return `
   <section class="card">
-    <div class="eyebrow">${esc(clan.name)} · current expedition</div>
-    <h2>${route.name} <small class="muted">${route.region} · ${fmtKm(route.lengthKm)} km</small></h2>
-    <p class="muted">${route.blurb}</p>
-    ${routeMap(route, clan.progressKm, color)}
-    ${elevationProfile(route, clan.progressKm, color)}
+    <h2>How journeys work</h2>
+    <ol class="steps">
+      <li><b>Move</b><span>Any activity adds trail distance. A 10-minute walk adds about ${dist(0.83)}.</span></li>
+      <li><b>The clan advances</b><span>Everyone's distance moves one shared marker along a real route.</span></li>
+      <li><b>Landmarks unlock</b><span>Each landmark reveals its history and geography. Finishing pays +200 essence each and starts the next journey.</span></li>
+    </ol>
   </section>
+
   <section class="card">
-    <h2>Waypoints</h2>
+    <div class="chain">${EXPEDITIONS.map((e) => `<span class="link ${doneIds.has(e.id) ? 'done' : ''} ${e.id === route.id ? 'current' : ''}"><small>${e.tier}</small>${doneIds.has(e.id) ? '✓ ' : ''}${esc(e.name)}</span>`).join('<em>›</em>')}</div>
+    <div class="journey-head">
+      <div class="grow"><div class="eyebrow">${esc(clan.name)} · ${route.region}</div><h2>${route.name}</h2><p class="muted">${route.blurb}</p></div>
+      <div class="big-num"><b>${distNum(clan.journeyKm)}</b><span>of ${dist(route.lengthKm)}</span></div>
+    </div>
+    <div class="bar big"><i style="width:${pct}%"></i></div>
+    ${pos.next ? `<div class="next-card" style="--c:${color}"><span class="next-num">${pos.nextIdx + 1}</span><div class="grow"><small class="eyebrow">Next landmark</small><b>${esc(pos.next.name)}</b><span class="muted small">${dist(pos.next.km - clan.journeyKm)} away · ${elev(pos.next.elev)} elevation · your total contribution ${dist(myKm)}</span></div><span class="reward">📜 Story</span></div>` : ''}
+    ${routeMap(route, clan.journeyKm, color)}
+  </section>
+
+  <section class="card">
+    <h2>Landmarks</h2>
     <ol class="timeline">
       ${route.waypoints.map((wp, i) => {
         const open = state.unlockedLore.includes(`${route.id}:${i}`);
         return `<li class="${open ? 'open' : 'locked'}" style="--c:${color}">
-          <div class="tl-head"><b>${open ? esc(wp.name) : 'Unknown waypoint'}</b><span class="muted small">km ${fmtKm(wp.km)} · ${wp.elev.toLocaleString()} m</span></div>
-          <p>${open ? esc(wp.lore) : `🔒 Your clan must travel ${fmtKm(Math.max(0, wp.km - clan.progressKm))} more km to uncover this place.`}</p>
+          <div class="tl-head"><b>${i + 1}. ${open ? esc(wp.name) : esc(wp.name)}</b><span class="muted small">${open ? 'Unlocked' : `${dist(Math.max(0, wp.km - clan.journeyKm))} to go`} · ${elev(wp.elev)}</span></div>
+          <p>${open ? esc(wp.lore) : '🔒 Story unlocks when your clan arrives.'}</p>
         </li>`;
       }).join('')}
     </ol>
+  </section>
+
+  <section class="card">
+    <h2>Seattle check-ins</h2>
+    <p class="muted small">Move to a real place and check in for +60 essence. The mobile app will confirm with GPS. In this prototype, check-ins unlock once you've logged an activity today. Check in at 3 places to earn the Rain Shell.</p>
+    <div class="places">${PLACES.map((p) => {
+      const done = state.checkins.some((c) => c.id === p.id);
+      return `<div class="place ${done ? 'done' : ''}"><span class="place-ic">${p.icon}</span><div class="grow"><b>${esc(p.name)}</b><small>${esc(p.blurb)}</small></div><button class="btn small ${done ? '' : 'primary'}" data-checkin="${p.id}" ${done ? 'disabled' : ''}>${done ? '✓ Visited' : 'Check in'}</button></div>`;
+    }).join('')}</div>
   </section>`;
 }
 
-// ---------- codex ----------
+bind.journey = function () {
+  view.querySelectorAll('[data-checkin]').forEach((b) => b.addEventListener('click', () => {
+    try { commit(G.checkIn(state, b.dataset.checkin)); } catch (err) { toast(esc(err.message), 'bad'); }
+  }));
+};
 
-function codexView() {
+// ---------- RANKS ----------
+
+function ranksView() {
+  const ranks = G.weeklyRanks(state);
+  const mine = ranks.find((r) => r.clan.id === state.clanId);
+  const seg = (id, label) => `<button class="${ranksTab === id ? 'active' : ''}" data-rtab="${id}">${label}</button>`;
+  let body = '';
+  if (ranksTab === 'clans') {
+    body = `
+    <p class="muted small">Score = distance per member × how many kin are Bonded. A clan where everyone moves beats one carried by a single athlete.</p>
+    <div class="table-wrap"><table class="ranks">
+      <thead><tr><th>#</th><th>Clan</th><th class="num hide-sm">${dUnit()}/member</th><th class="num">Bonded</th><th class="hide-sm">Status</th><th class="num">Score</th></tr></thead>
+      <tbody>${ranks.map((r) => `<tr class="${r.clan.id === state.clanId ? 'me' : ''}">
+        <td><b>${r.rank}</b> ${r.delta > 0 ? `<span class="up">▲${r.delta}</span>` : r.delta < 0 ? `<span class="down">▼${-r.delta}</span>` : '<span class="muted">–</span>'}</td>
+        <td><span class="kin-dot" style="background:${ELEMENTS[r.clan.element].color}"></span>${esc(r.clan.name)}<small class="muted hide-sm"> · ${r.clan.members.length} kin</small></td>
+        <td class="num hide-sm">${distNum(r.perMember)}</td>
+        <td class="num">${Math.round(r.bondShare * 100)}%</td>
+        <td class="hide-sm">${tierPill(r.st)}</td>
+        <td class="num"><b>${r.score}</b></td></tr>`).join('')}</tbody>
+    </table></div>`;
+  } else if (ranksTab === 'kin') {
+    const clan = G.playerClan(state);
+    if (!clan) body = '<p class="muted">Join a clan to see your kin rankings.</p>';
+    else {
+      const kin = G.kinStats(clan);
+      const top = (f) => [...kin].sort((a, b) => f(b) - f(a))[0];
+      const tb = top((k) => k.km), sf = top((k) => k.days.length), wf = top((k) => k.types);
+      const award = (icon, title, k, val, why) => `<div class="award"><span>${icon}</span><small>${title}</small><b>${esc(k.member.name)}${k.member.isPlayer ? ' (you)' : ''}</b><em>${val}</em><small class="muted">${why}</small></div>`;
+      body = `
+      <div class="awards">
+        ${award('🏃', 'Trailblazer', tb, dist(tb.km), 'Most distance this week')}
+        ${award('🔥', 'Steady Flame', sf, `${sf.days.length} days`, 'Most active days')}
+        ${award('🧭', 'Wayfinder', wf, `${wf.types} activity types`, 'Most variety')}
+      </div>
+      <div class="table-wrap"><table class="ranks">
+        <thead><tr><th>#</th><th>Kin</th><th class="hide-sm">This week</th><th class="num">${dUnit()}</th><th class="num">Types</th></tr></thead>
+        <tbody>${kin.map((k, i) => `<tr class="${k.member.isPlayer ? 'me' : ''}"><td><b>${i + 1}</b></td><td><span class="kin-dot" style="background:${ELEMENTS[k.member.element].color}"></span>${esc(k.member.name)} ${k.bonded ? '<span class="pill ok">Bonded</span>' : ''}</td><td class="hide-sm">${dayDots(k.days, G.weekdayIdx(now()))}</td><td class="num">${distNum(k.km)}</td><td class="num">${k.types}</td></tr>`).join('')}</tbody>
+      </table></div>`;
+    }
+  } else {
+    const tot = { earth: 0, fire: 0, water: 0, air: 0 };
+    state.clans.forEach((c) => Object.keys(tot).forEach((e) => { tot[e] += c.week.energy[e]; }));
+    const max = Math.max(...Object.values(tot), 1);
+    const sum = Object.values(tot).reduce((a, b) => a + b, 0) || 1;
+    const lead = Object.keys(tot).reduce((a, b) => (tot[b] > tot[a] ? b : a));
+    body = `
+    <p class="muted small">Every activity charges its element's energy across Seattle. The leading element this week is <b style="color:${ELEMENTS[lead].color}">${ELEMENTS[lead].name}</b>.</p>
+    <div class="elements-bars">${Object.keys(tot).map((e) => `<div style="--c:${ELEMENTS[e].color}"><span>${ELEMENTS[e].spirit.glyph} ${ELEMENTS[e].name}</span><span class="mbar"><i style="width:${Math.round((tot[e] / max) * 100)}%"></i></span><b>${dist(tot[e], 0)} · ${Math.round((tot[e] / sum) * 100)}%</b></div>`).join('')}</div>`;
+  }
+  return `
+  ${mine ? `<section class="card rank-hero" style="--c:${ELEMENTS[mine.clan.element].color}">
+    <div class="big-rank">#${mine.rank}<small>of ${ranks.length}</small></div>
+    <div class="grow"><div class="eyebrow">Seattle · week of ${fmtDay(G.fromKey(mine.clan.week.start), { month: 'short', day: 'numeric' })}</div><h2>${esc(mine.clan.name)}</h2>
+    <p class="muted small">${mine.delta > 0 ? `▲ Up ${mine.delta} from last week.` : mine.delta < 0 ? `▼ Down ${-mine.delta} from last week.` : 'Same place as last week.'} Getting one more kin Bonded is the fastest way to climb.</p></div>
+  </section>` : ''}
+  <section class="card">
+    <div class="segmented">${seg('clans', 'Clans')}${seg('kin', 'Your kin')}${seg('elements', 'Elements')}</div>
+    ${body}
+  </section>`;
+}
+
+bind.ranks = function () {
+  view.querySelectorAll('[data-rtab]').forEach((b) => b.addEventListener('click', () => { ranksTab = b.dataset.rtab; render(); }));
+};
+
+// ---------- JOURNAL (gear, lore, settings) ----------
+
+function journalView() {
   const total = EXPEDITIONS.reduce((s, e) => s + e.waypoints.length, 0);
+  const av = state.player.avatar || {};
   return `
   <section class="card">
-    <h2>Badges</h2>
+    <h2>Your wanderer</h2>
+    <p class="muted small">This is how you appear in the 3D camp.</p>
+    <div class="swatch-row"><span>Outfit</span>${OUTFITS.map((c) => `<button class="swatch ${av.outfit === c ? 'on' : ''}" data-outfit="${c}" style="background:${c}" aria-label="Outfit colour ${c}"></button>`).join('')}</div>
+    <div class="swatch-row"><span>Skin</span>${SKINS.map((c) => `<button class="swatch ${av.skin === c ? 'on' : ''}" data-skin="${c}" style="background:${c}" aria-label="Skin tone ${c}"></button>`).join('')}</div>
+    <div class="row gap"><button class="btn primary" data-go="home">See me in camp</button></div>
+  </section>
+  <section class="card">
+    <h2>Badges & gear</h2>
+    <p class="muted small">Every badge unlocks a piece of gear your avatar wears in the camp, so your kin can see what you've achieved.</p>
     <div class="badges">
-      ${Object.entries(BADGES).map(([id, b]) => `<div class="badge ${state.badges.includes(id) ? 'earned' : ''}" title="${esc(b.desc)}"><span>${b.icon}</span><b>${b.name}</b><small>${b.desc}</small></div>`).join('')}
+      ${Object.entries(BADGES).map(([id, b]) => `<div class="badge ${state.badges.includes(id) ? 'earned' : ''}"><span>${b.icon}</span><b>${b.name}</b><small>${b.desc}</small><em>${state.badges.includes(id) ? '✓ Wearing' : 'Unlocks'}: ${b.gear}</em></div>`).join('')}
     </div>
   </section>
   <section class="card">
-    <h2>Codex of the Land <small class="muted">${state.unlockedLore.length} / ${total}</small></h2>
-    <p class="muted">Geography and history you've uncovered by moving.</p>
+    <h2>Lore codex <small class="muted">${state.unlockedLore.length} / ${total}</small></h2>
     ${EXPEDITIONS.map((r) => {
       const found = r.waypoints.filter((_, i) => state.unlockedLore.includes(`${r.id}:${i}`)).length;
       return `<details class="codex" ${found ? 'open' : ''}>
         <summary><b>${r.name}</b> <span class="muted small">${r.region} · ${found}/${r.waypoints.length}</span></summary>
         <ul>${r.waypoints.map((wp, i) => state.unlockedLore.includes(`${r.id}:${i}`)
           ? `<li><b>${esc(wp.name)}</b><p>${esc(wp.lore)}</p></li>`
-          : `<li class="locked"><b>???</b><p class="muted">Not yet discovered.</p></li>`).join('')}</ul>
+          : '<li class="locked"><b>???</b><p class="muted">Not yet discovered.</p></li>').join('')}</ul>
       </details>`;
     }).join('')}
   </section>
   <section class="card">
     <h2>Settings</h2>
+    <div class="segmented small-seg"><button class="${imperial() ? 'active' : ''}" data-units="mi">Miles · feet</button><button class="${imperial() ? '' : 'active'}" data-units="km">Kilometres · metres</button></div>
+    <p class="muted small">Home: ${HOME.city} (Pacific Time). The 3D sky follows Seattle's time of day.</p>
     <button class="btn ghost" id="reset">Reset prototype data</button>
   </section>`;
 }
 
-bind.codex = function () {
+bind.journal = function () {
+  view.querySelectorAll('[data-outfit]').forEach((b) => b.addEventListener('click', () => { state.player.avatar = { ...state.player.avatar, outfit: b.dataset.outfit }; commit(); }));
+  view.querySelectorAll('[data-skin]').forEach((b) => b.addEventListener('click', () => { state.player.avatar = { ...state.player.avatar, skin: b.dataset.skin }; commit(); }));
+  view.querySelectorAll('[data-units]').forEach((b) => b.addEventListener('click', () => { state.settings.units = b.dataset.units; commit(); }));
   $('#reset').addEventListener('click', (e) => armConfirm(e.currentTarget, 'Tap again to erase everything', () => {
-    state = store.reset(); tab = 'home'; onboardPick = null; render();
+    state = store.reset(); tab = 'home'; onboardPick = null; draft = freshDraft(); render();
   }));
 };
 
-// ---------- ranks ----------
-
-function ranksView() {
-  const clans = [...state.clans].sort((a, b) => b.totalKm - a.totalKm);
-  const byEl = Object.keys(ELEMENTS).map((k) => ({ el: ELEMENTS[k], km: state.clans.filter((c) => c.element === k).reduce((s, c) => s + c.totalKm, 0) }));
-  const maxEl = Math.max(...byEl.map((x) => x.km), 1);
-  return `
-  <section class="card">
-    <h2>Balance of the Elements</h2>
-    <p class="muted">Total distance moved by each element's clans. No element wins for long: the world needs all four.</p>
-    <div class="elements-bars">
-      ${byEl.map((x) => `<div style="--c:${x.el.color}"><span>${x.el.spirit.glyph} ${x.el.name}</span><span class="mbar"><i style="width:${Math.round((x.km / maxEl) * 100)}%"></i></span><b>${fmtKm(x.km)} km</b></div>`).join('')}
-    </div>
-  </section>
-  <section class="card">
-    <h2>Clan leaderboard</h2>
-    <ul class="members">
-      ${clans.map((c, i) => `<li class="${c.id === state.clanId ? 'me' : ''}" style="--c:${ELEMENTS[c.element].color}"><span class="rank">${i + 1}</span><span class="mname">${ELEMENTS[c.element].spirit.glyph} ${esc(c.name)}</span><span class="muted small">${c.completed.length} 🏔️</span><b>${fmtKm(c.totalKm)} km</b></li>`).join('')}
-    </ul>
-  </section>`;
-}
-
-// ---------- generic bindings ----------
-
-view.addEventListener('click', (e) => {
-  const go = e.target.closest('[data-go]');
-  if (go) { tab = go.dataset.go; render(); }
-});
-
 // ---------- boot ----------
 
-const bootEvents = state.player ? G.catchUpSimulation(state) : [];
+const bootEvents = state.player ? G.catchUp(state) : [];
 store.save(state);
 render();
-if (bootEvents.some((e) => !e.quiet && e.type !== 'badge')) toast('While you were away, your kin kept moving.');
-announce(bootEvents.filter((e) => e.type === 'lore' || e.type === 'expedition'));
+if (bootEvents.length) toast('While you were away, your kin kept moving.');

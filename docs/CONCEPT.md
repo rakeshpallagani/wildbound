@@ -30,23 +30,32 @@ Humans are built to move in groups across landscapes. Modern fitness apps reward
 - **Essence:** personal progress, from minutes × intensity × affinity plus trial, expedition and badge bonuses.
 - **Trail km:** clan progress. Distance activities use real km × an activity factor (walk 1, hike 1.25, cycle 0.35, swim 4, paddle 0.6). Effort activities use minutes / 12 × intensity.
 
-### 3.3 Clans
+### 3.3 Weekly Clan Awakening (core incentive)
+- Weekly cycle, Monday to Sunday, Pacific time.
+- **Gauge:** 8 mi per member, charged by every member's trail distance. Each activity charges its own element's energy.
+- **Bonded:** a member who moved on 3 or more different days that week.
+- **Tiers:** Kindled at 33% (+25 essence each), Roused at 67% (+50), and Awakened at 100% **plus** 60% of kin Bonded.
+- **Awakened rewards:** a Power for 2 weeks, chosen by the dominant energy (Convergence if no element is above 40%), the next camp building, and +150 essence.
+- **Why it works:** participation beats raw output, and social tools (chat, Rally, cheers) have mechanical effects on it.
+- *Future:* real-world partner rewards for streaks of awakenings (park passes, gear-shop discounts, a local café on a group walk).
+
+### 3.4 Clans
 - From 3 to about 30 members. Each clan has one element, but members can be of any element.
 - **Objective:** one expedition at a time, with progress pooled from all members.
 - **Completion:** +200 essence for every member, the Summit Seeker badge, and the next expedition.
 - *Future:* clan pacts (weekly targets voted on by members), clan roles (Pathfinder, Keeper, Hearth-tender), clan totems that evolve, and cross-clan *gatherings* where several clans join one long route such as the Silk Road.
 
-### 3.4 Expeditions & lore
+### 3.5 Journeys & lore
 Real routes with waypoints at cumulative km. Each waypoint holds one short lore card on its geography or history. The current list:
 Inca Trail (42 km) → Everest Base Camp (62) → Hadrian's Wall (135) → Camino Francés (780) → Appalachian Trail (3,537).
 
 *Future routes:* Kumano Kodō, Te Araroa, the Silk Road, Great Wall sections, the Kungsleden, the Overland Track, Kilimanjaro, Mount Kailash kora.
 *Future lore formats:* quizzes that pay out essence, photo cards, "then and now" maps, and audio narration from your spirit.
 
-### 3.5 Daily trials
+### 3.6 Daily trials
 Three per day, chosen deterministically from the date and element. One always matches your element. Rewards are claimed automatically.
 
-### 3.6 Spirit guide (AI)
+### 3.7 Spirit guide (AI)
 The prototype uses rule-based whispers. The plan is an LLM-powered companion that:
 - speaks in the voice of the player's element,
 - brings up lore about the *next* waypoint as a hook ("there's a story waiting at Sayacmarca"),
@@ -58,7 +67,8 @@ Guardrails: no medical advice, encourage rest, and never shame the player for in
 ## 4. Real-world integration (roadmap)
 | Phase | Scope |
 |---|---|
-| **v0.1 (this prototype)** | Web, self-reported, localStorage, simulated clanmates |
+| v0.1 | Web, self-reported, localStorage, simulated clanmates |
+| **v0.2 (this prototype)** | Seattle edition: weekly Awakening, Powers, 3D camp, gear, chat, sync demo, check-ins, refined ranks |
 | v0.2 | Backend (Supabase or Firebase): accounts, real clans, invites, server-side engine |
 | v0.3 | Health data sync: Apple HealthKit, Android Health Connect, Strava API; verified activities |
 | v0.4 | AI spirit guide; lore quizzes |

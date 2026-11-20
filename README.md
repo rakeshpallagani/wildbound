@@ -6,34 +6,44 @@ Wildbound is a clan-based movement game. Your walks, lifts, runs, swims and matc
 
 > We evolved as hunter-gatherers: walking, carrying, climbing and roaming in tribes. Wildbound tries to bring back that instinct: move with your people, toward a shared horizon, and get curious about the land along the way.
 
-| Choose your element | Clan objective | Expedition (mobile) |
+| 3D clan camp | Log + "What this does" | Clan chat (mobile) |
 |---|---|---|
-| ![Onboarding](docs/screenshots/onboarding.png) | ![Clan](docs/screenshots/clan.png) | ![Expedition](docs/screenshots/expedition-mobile.png) |
+| ![3D camp](docs/screenshots/camp-3d.png) | ![Log](docs/screenshots/log.png) | ![Chat](docs/screenshots/chat-mobile.png) |
 
-## Core loop
+## Core loop (Seattle edition, v0.2)
 
 ```
- Move in real life ──► Log activity ──► Essence (grows your spirit)
-                                   └──► Trail km (moves your clan's expedition)
-                                                 │
-                     Waypoint reached ◄──────────┘
-                            │
-               Lore unlocked (geography + history)
-                            │
-            Expedition complete ──► clan rewards ──► next expedition
+Move in real life ──► sync (Strava / Apple Health / Health Connect / Garmin) or log manually
+        │
+        ├─► Essence ─────────► your element spirit evolves (4 forms)
+        ├─► Element energy ──► the clan's WEEKLY AWAKENING gauge
+        ├─► Active day ──────► you become "Bonded" (3 days this week)
+        └─► Trail distance ──► the clan marker walks a real route and unlocks lore
+
+Gauge full + 60% of kin Bonded ──► ⚡ CLAN AWAKENS
+   • a Power for 2 weeks (decided by which element's energy led the week)
+   • a new building rises in the 3D camp
+   • +150 essence for everyone
 ```
 
-## Features (prototype v0.1)
+Because the Awakening needs **60% of members Bonded**, the clan can't be carried by one athlete. Clan chat, the daily **Rally**, and cheering exist to get sleepy members moving. In balance testing, the simulated clanmates alone never awaken, while about 8 mi over 4 days from you plus one rally tips the clan over.
 
-- **Four element spirits:** Earth 🐻 (strength, hiking, climbing), Fire 🦊 (running, HIIT, sport), Water 🦦 (swimming, paddling, yoga) and Air 🦅 (walking, cycling, dance). Activities that match your element earn **×1.5 essence**, but every kind of movement counts.
-- **Spirit evolution:** your spirit grows through four forms as essence builds (for example, Pebble → Boulder → Ridge → Mountain).
-- **Fair scoring across activities:** distance activities convert real km into trail km, with weighting per activity (cycling ×0.35, swimming ×4). Strength, sport and yoga convert effort minutes into trail km.
-- **Clans:** join a clan or found your own. All members add to one shared expedition. The kin leaderboard shows everyone's contribution.
-- **Expeditions on real trails:** a stylised route map and elevation profile, drawn from approximate waypoint coordinates.
-- **Codex of the Land:** 46 lore entries about the places on each route.
-- **Daily trials:** three objectives per day, always including one for your element.
-- **Badges, streaks, and the "Balance of the Elements"** leaderboard.
-- **Spirit whispers:** contextual nudges from your companion. These are rule-based for now and designed to be replaced by an LLM.
+### What does a 10-minute walk do?
+On the Log screen, the "What this does" panel answers this for any activity before you save it. A 10-minute easy walk gives:
+- +10 essence for your spirit (+15 if you're Air, the walking element),
+- about 0.5 mi of **Air energy** for the clan gauge,
+- one more day toward being **Bonded**,
+- about 0.5 mi along the current journey,
+- possibly a daily trial such as "Move for at least 10 minutes".
+
+## Features
+- **3D clan camp** (Three.js): a low-poly island on Puget Sound with Rainier, the Olympics and the Space Needle on the horizon, and the sky following Seattle's time of day (optional rain ☔). Your avatar walks around (tap the ground or use WASD) with your spirit companion. Your kin stand around the fire, with a glowing ring when they're Bonded. The element totem glows with the week's energy, and each Awakening adds a building.
+- **Badges are gear:** boots, clan cloak, sun amulet, lantern, explorer's pack, Rain Shell and more appear on your avatar.
+- **Clan Powers:** Mountain's Endurance (Earth), Wildfire Rally (Fire), Tidal Recovery (Water), Tailwind (Air), and Elemental Convergence when the clan's energy is balanced.
+- **Clan chat:** activity cards, cheers (+2 essence), a daily Rally that raises sleepy kin's chance to move, and replies from simulated clanmates.
+- **Journeys:** Seattle Urban Trek → Snoqualmie Valley & Mount Si → Wonderland Trail → Inca Trail → Everest Base Camp → Camino de Santiago, with landmark lore. There are also **Seattle check-ins**: Green Lake, Kerry Park, Seward Park, Golden Gardens, the Arboretum and Magnuson Park.
+- **Ranks:** weekly clan table (distance per member × Bonded share), kin awards (Trailblazer, Steady Flame, Wayfinder) and the element balance across Seattle.
+- **Units:** miles and feet by default, with a kilometres option.
 
 ## Run it
 
@@ -63,6 +73,8 @@ js/data.js          Elements, activities, expeditions + lore, badges, seed clans
 js/engine.js        Game rules: scoring, spirits, trials, clans, expeditions, badges (no DOM)
 js/store.js         Persistence (localStorage; swap for a backend)
 js/app.js           UI views and event wiring
+js/world3d.js       3D camp (Three.js r128, vendored in vendor/)
+js/sync.js          Activity sources (demo data; see docs/INTEGRATIONS.md)
 tests/              Unit tests for the engine
 docs/CONCEPT.md     Game design document and roadmap
 ```
@@ -72,7 +84,8 @@ The engine is kept free of DOM code on purpose, so the same rules can later run 
 ## Prototype limitations
 
 - Activities are self-reported, and data stays in your browser's localStorage.
-- Other clan members are **simulated** so you can feel shared progress. Use **⏩ Simulate a day** on the Clan tab.
+- Other clan members and chat replies are **simulated**. **⏩ Simulate a day** on the Clan tab lets them move and advances a demo clock, so you can watch a week, an Awakening and a week rollover play out.
+- Sync buttons import sample workouts. Real integrations need a backend and native apps (see [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)).
 - Map coordinates and distances are approximate and for illustration only.
 
 See [docs/CONCEPT.md](docs/CONCEPT.md) for the full design and roadmap.
