@@ -13,6 +13,16 @@ const view = $('#view');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtKm = (n) => (n >= 100 ? Math.round(n).toLocaleString() : (Math.round(n * 10) / 10).toLocaleString());
 
+// Two-step confirm inside the page (native dialogs are blocked in embedded viewers).
+function armConfirm(btn, label, action) {
+  if (btn.dataset.armed) { action(); return; }
+  const original = btn.textContent;
+  btn.dataset.armed = '1';
+  btn.textContent = label;
+  btn.classList.add('danger');
+  setTimeout(() => { if (btn.isConnected) { delete btn.dataset.armed; btn.textContent = original; btn.classList.remove('danger'); } }, 3500);
+}
+
 function commit(events = []) {
   store.save(state);
   render();
@@ -343,7 +353,7 @@ bind.clan = function () {
     try { commit(G.foundClan(state, { name: fd.get('name'), motto: fd.get('motto') })); toast('🔥 Your clan fire is lit. Two wanderers have answered the call.', 'epic'); }
     catch (err) { toast(esc(err.message), 'bad'); }
   });
-  $('#leave')?.addEventListener('click', () => { if (confirm('Leave your clan? Your personal progress stays.')) { G.leaveClan(state); commit(); } });
+  $('#leave')?.addEventListener('click', (e) => armConfirm(e.currentTarget, 'Tap again to leave', () => { G.leaveClan(state); commit(); }));
   $('#sim')?.addEventListener('click', () => { const ev = G.simulateDay(state); commit(ev); toast('⏩ A day passes. Your kin moved too.'); });
   $('#invite')?.addEventListener('click', async () => {
     const text = `Join my clan "${G.playerClan(state).name}" on Wildbound: move together, explore the world.`;
@@ -462,9 +472,9 @@ function codexView() {
 }
 
 bind.codex = function () {
-  $('#reset').addEventListener('click', () => {
-    if (confirm('Erase all Wildbound data in this browser?')) { state = store.reset(); tab = 'home'; onboardPick = null; render(); }
-  });
+  $('#reset').addEventListener('click', (e) => armConfirm(e.currentTarget, 'Tap again to erase everything', () => {
+    state = store.reset(); tab = 'home'; onboardPick = null; render();
+  }));
 };
 
 // ---------- ranks ----------
