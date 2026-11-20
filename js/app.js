@@ -312,6 +312,7 @@ function mapView() {
   const clan = G.playerClan(state);
   const layer = (id, label, n) => `<button class="${mapLayer === id ? 'active' : ''}" data-layer="${id}">${label}${n != null ? ` <small>${n}</small>` : ''}</button>`;
   return `
+  ${backend.status === 'signed-out' ? signInCard() : ''}
   ${clan ? '' : '<section class="card intro-strip"><b>Find your people.</b> Each glowing Hearth is a clan\'s home base. Tap one to meet them, or browse gatherings happening nearby.</section>'}
   <section class="world-wrap map-wrap">
     <div id="map" class="world"></div>
@@ -329,6 +330,14 @@ function mapView() {
   <section class="card loc-help" id="loc-help" hidden></section>
   <section class="card sel-panel" id="sel-panel"></section>
   <section class="card"><div id="layer-list"></div></section>`;
+}
+function signInCard() {
+  return `<section class="card signin-card"><div class="card-head"><div><h2>☁︎ Play with real people</h2><p class="muted small">Sign in to save your progress, create or join real clans, and chat live with friends. We'll email you a one-tap link. Open it on this phone.</p></div></div>
+    <form id="si-form" class="row"><input id="si-email" type="email" placeholder="you@example.com" autocomplete="email" required /><button class="btn primary" type="submit">Email me a link</button><button class="btn" type="button" id="si-guest">Guest</button></form></section>`;
+}
+function bindSignIn() {
+  $('#si-form')?.addEventListener('submit', async (e) => { e.preventDefault(); const b = e.target.querySelector('button'); b.disabled = true; try { await backend.signInEmail($('#si-email').value); toast('📧 Check your email and tap the sign-in link on this phone.', 'good'); } catch (err) { toast(esc(err.message), 'bad'); } b.disabled = false; });
+  $('#si-guest')?.addEventListener('click', async () => { try { await backend.signInGuest(); toast('Signed in as a guest.', 'good'); } catch (err) { toast(`${esc(err.message)}`, 'bad'); } });
 }
 function youPill() {
   const pr = G.spiritProgress(G.totalEssence(state));
@@ -612,6 +621,7 @@ bind.map = async function () {
   renderPanel();
   renderList();
   renderLocHelp();
+  bindSignIn();
 };
 
 // ---------- LOG ----------
@@ -1016,7 +1026,8 @@ render();
 backend.connect().then(async () => {
   if (backend.online && state.player) { await remoteTry(() => backend.saveProfile(state.player), true); await remoteTry(pullAndMerge, true); }
   renderChip();
-  if (tab === 'me') render();
+  if (tab === 'me' || backend.status === 'signed-out' || backend.online) refreshQuiet();
+  if (backend.status === 'error') toast(`Backend: ${esc(backend.error)}`, 'bad');
 });
 if (bootEvents.length) { toast('While you were away, your kin and rivals kept moving.'); announce(bootEvents.filter((e) => ['tribute', 'lost', 'awaken'].includes(e.type))); }
 if ('serviceWorker' in navigator && window.top === window && /^https:|^http:\/\/localhost/.test(location.href)) {
