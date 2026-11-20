@@ -331,13 +331,20 @@ function mapView() {
   <section class="card sel-panel" id="sel-panel"></section>
   <section class="card"><div id="layer-list"></div></section>`;
 }
+let pendingEmail = '';
 function signInCard() {
-  return `<section class="card signin-card"><div class="card-head"><div><h2>☁︎ Play with real people</h2><p class="muted small">Sign in to save your progress, create or join real clans, and chat live with friends. We'll email you a one-tap link. Open it on this phone.</p></div></div>
-    <form id="si-form" class="row"><input id="si-email" type="email" placeholder="you@example.com" autocomplete="email" required /><button class="btn primary" type="submit">Email me a link</button><button class="btn" type="button" id="si-guest">Guest</button></form></section>`;
+  return `<section class="card signin-card"><div class="card-head"><div><h2>☁︎ Play with real people</h2><p class="muted small">Sign in to save your progress, create or join real clans, and chat live with friends.</p></div></div>
+    ${pendingEmail
+      ? `<p class="small">We emailed <b>${esc(pendingEmail)}</b>. Type the <b>6-digit code</b> from that email here. On iPhone, use the code rather than the link: the link opens Safari, not this app.</p>
+         <form id="si-code" class="row"><input id="si-token" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="123456" required /><button class="btn primary" type="submit">Verify</button><button class="btn ghost" type="button" id="si-back">Use another email</button></form>`
+      : `<form id="si-form" class="row"><input id="si-email" type="email" placeholder="you@example.com" autocomplete="email" required /><button class="btn primary" type="submit">Email me a code</button><button class="btn" type="button" id="si-guest">Guest</button></form>`}
+  </section>`;
 }
 function bindSignIn() {
-  $('#si-form')?.addEventListener('submit', async (e) => { e.preventDefault(); const b = e.target.querySelector('button'); b.disabled = true; try { await backend.signInEmail($('#si-email').value); toast('📧 Check your email and tap the sign-in link on this phone.', 'good'); } catch (err) { toast(esc(err.message), 'bad'); } b.disabled = false; });
-  $('#si-guest')?.addEventListener('click', async () => { try { await backend.signInGuest(); toast('Signed in as a guest.', 'good'); } catch (err) { toast(`${esc(err.message)}`, 'bad'); } });
+  $('#si-form')?.addEventListener('submit', async (e) => { e.preventDefault(); const b = e.target.querySelector('button'); b.disabled = true; const em = $('#si-email').value.trim(); try { await backend.signInEmail(em); pendingEmail = em; toast('📧 Code sent. Check your email.', 'good'); render(); } catch (err) { toast(esc(err.message), 'bad'); b.disabled = false; } });
+  $('#si-code')?.addEventListener('submit', async (e) => { e.preventDefault(); try { await backend.verifyCode(pendingEmail, $('#si-token').value); pendingEmail = ''; toast('☁︎ Signed in. Your progress now syncs.', 'good'); } catch (err) { toast(`${esc(err.message)}`, 'bad'); } });
+  $('#si-back')?.addEventListener('click', () => { pendingEmail = ''; render(); });
+  $('#si-guest')?.addEventListener('click', async () => { try { await backend.signInGuest(); toast('Signed in as a guest.', 'good'); } catch (err) { toast(`${esc(err.message)} (turn on Anonymous sign-ins in Supabase).`, 'bad'); } });
 }
 function youPill() {
   const pr = G.spiritProgress(G.totalEssence(state));

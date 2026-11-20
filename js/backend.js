@@ -68,6 +68,7 @@ export function createBackend({ onChange = () => {} } = {}) {
     async signInEmail(email) {
       check(await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } }));
     },
+    async verifyCode(email, token) { check(await sb.auth.verifyOtp({ email, token: String(token).trim(), type: 'email' })); },
     async signInGuest() { check(await sb.auth.signInAnonymously()); },
     async signOut() { await sb?.auth.signOut(); user = null; status = 'signed-out'; subs.forEach((c) => sb.removeChannel(c)); subs = []; },
 

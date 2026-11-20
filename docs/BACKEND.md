@@ -8,7 +8,8 @@ Wildbound runs fully offline, with demo clans simulated in your browser. Connect
 3. Under **Authentication → Sign In / Providers**:
    - **Email** is on by default (magic-link sign-in).
    - Optional: turn on **Anonymous sign-ins** to allow the "Continue as guest" button.
-4. Under **Authentication → URL Configuration**, set **Site URL** to `https://rakeshpallagani.github.io/wildbound/` and add it to the redirect URLs.
+4. Under **Authentication → Emails → Magic Link** (email template), add a line with the code: `Your Wildbound code: {{ .Token }}`. Installed iPhone apps need the code, because email links open in Safari, which has its own login.
+5. Under **Authentication → URL Configuration**, set **Site URL** to `https://rakeshpallagani.github.io/wildbound/` and add it to the redirect URLs.
 
 ## 2. Point the app at it
 Pick one:
