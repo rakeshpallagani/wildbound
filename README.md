@@ -10,11 +10,21 @@ Wildbound is a clan-based movement game set in real-world Seattle. Every walk, l
 |---|---|---|
 | ![3D map](docs/screenshots/map-3d.png) | ![Log](docs/screenshots/log.png) | ![Chat](docs/screenshots/chat-mobile.png) |
 
+## Try it on your phone
+1. Open **https://rakeshpallagani.github.io/wildbound/** on your phone.
+2. Install it:
+   - **iPhone (Safari):** Share → **Add to Home Screen**.
+   - **Android (Chrome):** ⋮ → **Install app**.
+3. Open it from the home screen and allow location. Your avatar walks with you on the 3D map, and **Activities** lists meetups within 1, 3 or 10 miles.
+4. To play with real friends instead of demo clans, connect the backend: see [docs/BACKEND.md](docs/BACKEND.md).
+
+Limits of a web app: tracking pauses when the screen is off or the app is in the background. A native wrapper such as Capacitor fixes this and is on the roadmap.
+
 ## Product plan
 
 | Phase | What ships | Why |
 |---|---|---|
-| **1 · Social core** | Pick a primary Aspect → find a clan **on the map** (each clan has a Hearth in a neighborhood) → log or sync activity → clan chat → weekly Awakening → **gatherings**: clan activities happening nearby that anyone can join and check in to | Clans and real meetups are fun with 3 friends. This builds density before territory matters. |
+| **1 · Social core** | Pick a primary Aspect → find a clan **on the map** (each clan has a Hearth in a neighborhood) → join its **bands** (smaller groups like *Dawn Lifters* or *Sunday Strikers*, each with its own chat channel) → log, sync or GPS-track activity → weekly Awakening → **activities near you**: band meetups anyone can join and check in to | Clans and real meetups are fun with 3 friends. This builds density before territory matters. |
 | **2 · Territory** | **Vigils** on landmarks, unlocked at **clan Level 3 · Outpost**, with tribute, boons, sieges and the Lumen shop | Competition between clans needs enough players nearby, verified GPS, and safety rules. The goal is visible (locked) from day one. |
 
 Clan levels: Lv 1 Campfire (chat, Awakening, join gatherings) → Lv 2 Hearth (host gatherings) → **Lv 3 Outpost (vigils)** → Lv 4 Stronghold (+1 Seal per Awakening) → Lv 5 Citadel (vigils fade slower). Clan XP comes from members' miles, Awakenings and gathering attendance.
@@ -97,6 +107,9 @@ js/geo.js           Projection, distances, simplified Seattle basemap
 js/tracker.js       GPS / Demo GPS trek tracking
 js/gmaps.js         Optional Google Photorealistic 3D adapter (your API key)
 js/sync.js          Activity sources (demo data; see docs/INTEGRATIONS.md)
+js/backend.js       Supabase adapter: auth, sync, realtime (see docs/BACKEND.md)
+supabase/schema.sql Database tables, security rules, realtime
+config.js           Backend URL + public anon key
 sw.js, manifest.webmanifest   Installable PWA
 tests/              Unit tests for the engine
 docs/CONCEPT.md     Game design document and roadmap

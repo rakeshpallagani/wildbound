@@ -473,6 +473,8 @@ export function createMap3D({ onSelect = () => {}, onMove = () => {} } = {}) {
 
   // ---------- controls ----------
   let theta = 0.35, phi = 0.95, dist = 220;
+  let follow = true;
+  const focusPt = new THREE.Vector3();
   const target = new THREE.Vector3();
   const pointers = new Map();
   let moved = 0, pinch0 = 0, dist0 = dist;
@@ -505,7 +507,7 @@ export function createMap3D({ onSelect = () => {}, onMove = () => {} } = {}) {
     if (hit) { onSelect(hit.object.userData.pick.kind, hit.object.userData.pick.id); return; }
     const p = new THREE.Vector3();
     if (ray.ray.intersectPlane(groundPlane, p)) {
-      if (mode === 'demo') walkTarget = p.setY(0);
+      if (mode === 'demo') { walkTarget = p.setY(0); follow = true; }
       onSelect(null, null);
     }
   };
@@ -570,7 +572,7 @@ export function createMap3D({ onSelect = () => {}, onMove = () => {} } = {}) {
       rain.position.set(target.x, 0, target.z);
     }
     if (moving && t - lastEmit > 0.15) { lastEmit = t; const ll = unproject(pos.x, pos.z); onMove(ll.lat, ll.lon, mode); }
-    target.lerp(new THREE.Vector3(pos.x, 4, pos.z), Math.min(1, dt * 4));
+    target.lerp(follow ? new THREE.Vector3(pos.x, 4, pos.z) : focusPt, Math.min(1, dt * 4));
     camera.position.set(target.x + dist * Math.sin(phi) * Math.sin(theta), target.y + dist * Math.cos(phi), target.z + dist * Math.sin(phi) * Math.cos(theta));
     camera.lookAt(target);
     const labelScale = clampN(dist / 220, 0.6, 3);
@@ -603,8 +605,10 @@ export function createMap3D({ onSelect = () => {}, onMove = () => {} } = {}) {
       trackGeo.setAttribute('position', new THREE.BufferAttribute(arr, 3));
       trackGeo.computeBoundingSphere();
     },
-    walkTo(lat, lon) { const p = project(lat, lon); walkTarget = new THREE.Vector3(p.x, 0, p.z); },
-    focusOn(lat, lon) { const p = project(lat, lon); target.set(p.x, 4, p.z); },
+    walkTo(lat, lon) { const p = project(lat, lon); walkTarget = new THREE.Vector3(p.x, 0, p.z); follow = true; },
+    focusOn(lat, lon) { const p = project(lat, lon); focusPt.set(p.x, 4, p.z); follow = false; },
+    followMe() { follow = true; },
+    get following() { return follow; },
     zoom(f) { dist = clampN(dist * f, 40, 1600); },
     recenter() { theta = 0.35; phi = 0.95; dist = 220; },
     setRain(on) { rainOn = !!on; rain.visible = rainOn; updateSky(true); },

@@ -4,6 +4,7 @@ import * as G from '../js/engine.js';
 import { EXPEDITIONS, AWAKENING, POWERS, VIGILS, VIGIL, ASPECT_IDS } from '../js/data.js';
 import { fetchRecent } from '../js/sync.js';
 import { haversineM, project, unproject, isWater } from '../js/geo.js';
+import { mergeWorld } from '../js/backend.js';
 
 const WED = new Date(2026, 10, 18, 10); // Wed Nov 18 2026
 const r = (n) => Math.round(n * 10) / 10;
@@ -224,6 +225,57 @@ test('gatherings: seeded, RSVP, check in on the day at the spot, host at Lv 2', 
   assert.equal(ev[0].g.clanId, 'cascade');
   G.foundClan(s, { name: 'Tiny' }, WED);
   assert.throws(() => G.hostGathering(s, { type: 'run', spotId: 'green-lake' }, WED), /Level 2/);
+});
+
+test('clans have multiple bands; joining a band opens its channel; band meetups appear', () => {
+  const s = fresh();
+  const cascade = s.clans.find((c) => c.id === 'cascade');
+  assert.ok(cascade.bands.length >= 3);
+  assert.ok(s.gatherings.some((g) => g.bandId && g.clanId === 'cascade'));
+  assert.throws(() => G.joinBand(s, cascade.bands[0].id, WED), /Join the clan/);
+  G.joinClan(s, 'cascade', WED);
+  G.joinBand(s, cascade.bands[0].id, WED);
+  G.joinBand(s, cascade.bands[1].id, WED);
+  assert.equal(G.myBands(s).length, 2);
+  const ch = `cascade/${cascade.bands[0].id}`;
+  assert.ok(s.chat[ch].length >= 1);
+  const ev = G.postMessage(s, 'see you there', WED, ch);
+  assert.equal(ev[0].channel, ch);
+  G.createBand(s, { name: 'Lunch Lifters', type: 'strength', spotId: 'gas-works', time: '12:00' }, WED);
+  assert.ok(G.myBands(s).some((b) => b.name === 'Lunch Lifters'));
+  assert.throws(() => G.createBand(s, { name: 'Lunch Lifters', type: 'strength', spotId: 'gas-works' }, WED), /exists/);
+});
+
+test('backend merge: real clans, bands, gatherings and chat land in local state', () => {
+  const s = fresh();
+  const me = 'u1', friend = 'u2', clanId = 'c-real';
+  const t = new Date();
+  mergeWorld(s, {
+    me, myClan: clanId,
+    clans: [{ id: clanId, name: 'Real Ravens', aspect: 'emberclaw', motto: 'hi', hub_name: 'Fremont', hub_lat: 47.651, hub_lng: -122.35, xp: 300, seals: 1 }],
+    members: [{ user_id: me, clan_id: clanId }, { user_id: friend, clan_id: clanId }],
+    profiles: [{ id: me, name: 'Tester', primary_aspect: 'ironroot' }, { id: friend, name: 'Sam', primary_aspect: 'emberclaw' }],
+    bands: [{ id: 'b1', clan_id: clanId, name: 'Sunday Soccer', focus: 'sport', spot_name: 'Magnuson', spot_lat: 47.6815, spot_lng: -122.256, usual_time: '10:00' }],
+    bandMembers: [{ band_id: 'b1', user_id: friend }],
+    gatherings: [{ id: 'g1', clan_id: clanId, band_id: 'b1', host_id: friend, title: 'Pickup', type: 'sport', spot_name: 'Somewhere new', lat: 47.66, lng: -122.30, starts_at: t.toISOString() }],
+    rsvps: [{ gathering_id: 'g1', user_id: friend, status: 'going' }],
+    activities: [{ id: 'a1', user_id: friend, clan_id: clanId, type: 'sport', aspect: 'emberclaw', trail_km: 5, occurred_at: t.toISOString() }],
+    messages: [{ id: 'm1', clan_id: clanId, band_id: null, user_id: friend, kind: 'msg', body: 'hello', created_at: t.toISOString() }],
+  });
+  const clan = G.playerClan(s);
+  assert.equal(clan.name, 'Real Ravens');
+  assert.ok(clan.remote);
+  assert.equal(clan.members.length, 2);
+  assert.equal(clan.week.energy.emberclaw, 5);
+  assert.equal(clan.xp, 300);
+  assert.equal(clan.bands[0].members[0], 'u-u2');
+  const g = s.gatherings.find((x) => x.id === 'g1');
+  assert.equal(g.host, 'Sam');
+  assert.ok(G.spotById(g.spotId), 'unknown spot gets registered');
+  assert.equal(s.chat[clanId][0].from.name, 'Sam');
+  const ev = G.postMessage(s, 'hi Sam', new Date(), clanId);
+  assert.equal(s.chat[clanId].length, 2, 'no simulated replies in a real clan');
+  assert.equal(ev[0].type, 'sent');
 });
 
 test('journeys are well formed', () => {

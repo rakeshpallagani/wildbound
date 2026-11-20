@@ -1,7 +1,7 @@
 // Wildbound — game rules (no DOM). Mutating functions take the state object and return UI events.
 import {
   ASPECTS, ASPECT_IDS, AFFINITY, ACTIVITIES, INTENSITY, EXPEDITIONS, BADGES, SEED_CLANS, SEED_VIGILS, AWAKENING, POWERS,
-  VIGIL, VIGILS, SHOP, CHAT, HOME, CLAN_LEVELS, VIGIL_MIN_LEVEL, HOST_MIN_LEVEL, SPOTS, GATHERING_TEMPLATES, GATHERING,
+  VIGIL, VIGILS, SHOP, CHAT, HOME, CLAN_LEVELS, VIGIL_MIN_LEVEL, HOST_MIN_LEVEL, SPOTS, BAND_TEMPLATES, OPEN_BANDS, GATHERING,
 } from './data.js';
 import { haversineM } from './geo.js';
 
@@ -82,7 +82,22 @@ function seedClan(c, i, now) {
     journeyId: EXPEDITIONS[0].id, journeyKm: r1(rng() * EXPEDITIONS[0].lengthKm * 0.4), completed: [],
     totalKm: r1(members.reduce((a, m) => a + m.totalKm, 0)),
     week: emptyWeek(weekStart(now)), history: [], awakenings: i % 3, seals: c.seals ?? 1, power: null, lastRank: null,
+    bands: seedBands(c, members, rng),
   };
+}
+
+function makeBand(clanId, [name, type, spotId, time, meetup], members = []) {
+  return { id: `${clanId}-${name.toLowerCase().replace(/[^a-z]+/g, '-')}`, name, type, spotId, time, meetup, members };
+}
+function seedBands(c, members, rng) {
+  const idx = Math.max(0, SEED_CLANS.findIndex((x) => x.id === c.id));
+  const tpl = [...BAND_TEMPLATES[c.aspect], OPEN_BANDS[idx % OPEN_BANDS.length]];
+  const bands = tpl.map((t) => makeBand(c.id, t));
+  members.forEach((m, i) => {
+    bands[i % bands.length].members.push(m.id);
+    if (rng() < 0.5) { const b = bands[Math.floor(rng() * bands.length)]; if (!b.members.includes(m.id)) b.members.push(m.id); }
+  });
+  return bands;
 }
 
 export function createPlayer(state, { name, primary, secondary = null }) {
@@ -256,7 +271,7 @@ export function evaluateTiers(state, clan, now) {
       if (mine) {
         state.bonusEssence += t.reward;
         events.push({ type: 'tier', tier: t });
-        addChat(state, clan.id, { kind: 'system', text: `The clan gauge is ${t.name}! Everyone gets +${t.reward} essence.` }, now);
+        addChat(state, clan.id, { kind: 'system', text: `The clan gauge is ${t.name}! Everyone gets +${t.reward} XP.` }, now);
       }
     }
   }
@@ -349,7 +364,7 @@ export function advanceJourney(state, clan, km, now) {
       if (mine) {
         state.bonusEssence += 200;
         events.push({ type: 'journey', route, next });
-        addChat(state, clan.id, { kind: 'system', text: `🏔️ Journey complete: ${route.name}! +200 essence each. Next: ${next.name}.` }, now);
+        addChat(state, clan.id, { kind: 'system', text: `🏔️ Journey complete: ${route.name}! +200 XP each. Next: ${next.name}.` }, now);
         unlockPassed(state, next, 0, events);
       }
     } else break;
@@ -395,6 +410,7 @@ export function foundClan(state, { name, motto }, now = worldNow(state)) {
       { id: 'm-tamsin', name: 'Tamsin', aspect: 'galewing', propensity: 0.6, isPlayer: false, totalKm: 0 },
       { id: 'm-bodhi', name: 'Bodhi', aspect: 'ironroot', propensity: 0.5, isPlayer: false, totalKm: 0 },
     ],
+    bands: [],
     journeyId: EXPEDITIONS[0].id, journeyKm: 0, completed: [], totalKm: 0,
     week: emptyWeek(weekStart(now)), history: [], awakenings: 0, seals: 1, power: null, lastRank: null,
   });
@@ -518,6 +534,7 @@ export function fortify(state, id, km = null, now = worldNow(state)) {
   if (use <= 0) throw new Error('No movement left to pledge today. Log or track some first.');
   const add = Math.round(use * wardPerKm(clan, now));
   v.ward = Math.min(VIGIL.maxWard, v.ward + add);
+  v.pledges = { ...(v.pledges || {}), me: (v.pledges?.me || 0) + add };
   usePledge(state, use, now);
   addChat(state, clan.id, { kind: 'system', text: `🛡️ ${state.player.name} fortified ${vs.site.vigil} at ${vs.site.name} (+${add} ward → ${v.ward}).` }, now);
   return [{ type: 'fortify', site: vs.site, add, ward: v.ward }];
@@ -558,6 +575,7 @@ function fall(state, id, breaker, now, overflow = 0) {
     breaker.seals -= 1;
     v.holder = breaker.id;
     v.ward = VIGIL.establishWard + Math.max(0, overflow);
+    v.pledges = breaker.id === state.clanId ? { me: v.ward } : {};
     v.shieldUntil = null;
     if (breaker.id === state.clanId) {
       state.flags.warden = true;
@@ -581,6 +599,7 @@ export function establish(state, id, now = worldNow(state)) {
   clan.seals -= 1;
   v.holder = clan.id;
   v.ward = VIGIL.establishWard;
+  v.pledges = { me: VIGIL.establishWard };
   const extra = pledgeableKm(state, now);
   if (extra > 0) { v.ward = Math.min(VIGIL.maxWard, v.ward + Math.round(extra * wardPerKm(clan, now))); usePledge(state, extra, now); }
   state.flags.warden = true;
@@ -659,23 +678,50 @@ export function ensureGatherings(state, now = worldNow(state)) {
   state.gatherings = (state.gatherings || []).filter((g) => g.day >= today);
   const rng = mulberry32((fromKey(today).getTime() / 1000 + state.gatherings.length) >>> 0);
   for (const clan of state.clans) {
-    if (clan.founded) continue; // player-founded clans gather when the player hosts
-    const bots = clan.members.filter((m) => !m.isPlayer);
-    const tpl = GATHERING_TEMPLATES[clan.aspect];
-    let have = state.gatherings.filter((g) => g.clanId === clan.id).length;
-    while (have < 2) {
-      const [title, type, spotId, time] = tpl[Math.floor(rng() * tpl.length)];
-      const offset = have === 0 && rng() < 0.6 ? 0 : 1 + Math.floor(rng() * 5);
-      const day = dayKey(addDays(now, offset));
-      if (state.gatherings.some((g) => g.clanId === clan.id && g.day === day)) { have++; continue; }
+    if (clan.founded || clan.remote) continue; // real clans and your own clan meet when people host
+    for (const band of clan.bands || []) {
+      if (state.gatherings.some((g) => g.bandId === band.id)) continue;
+      const bots = clan.members.filter((m) => !m.isPlayer && band.members.includes(m.id));
+      if (!bots.length) continue;
+      const offset = rng() < 0.45 ? 0 : 1 + Math.floor(rng() * 5);
       const host = bots[Math.floor(rng() * bots.length)];
-      const going = bots.filter(() => rng() < 0.55).map((m) => m.id);
+      const going = bots.filter(() => rng() < 0.7).map((m) => m.id);
       if (!going.includes(host.id)) going.push(host.id);
-      state.gatherings.push({ id: 'g' + Math.random().toString(36).slice(2, 9), clanId: clan.id, title, type, spotId, day, time, host: host.name, going, rsvp: false, attended: false });
-      have++;
+      state.gatherings.push({ id: 'g' + Math.random().toString(36).slice(2, 9), clanId: clan.id, bandId: band.id, title: band.meetup, type: band.type, spotId: band.spotId, day: dayKey(addDays(now, offset)), time: band.time, host: host.name, going, rsvp: false, attended: false });
     }
   }
   state.gatherings.sort((a, b) => (a.day + a.time < b.day + b.time ? -1 : 1));
+}
+
+// ---------- bands ----------
+
+export const bandById = (state, id) => { for (const c of state.clans) { const b = (c.bands || []).find((x) => x.id === id); if (b) return { clan: c, band: b }; } return null; };
+export const myBands = (state) => (playerClan(state)?.bands || []).filter((b) => b.members.includes('me'));
+
+export function joinBand(state, bandId, now = worldNow(state)) {
+  const found = bandById(state, bandId);
+  if (!found || found.clan.id !== state.clanId) throw new Error('Join the clan first, then its bands');
+  const { band, clan } = found;
+  if (band.members.includes('me')) { band.members = band.members.filter((x) => x !== 'me'); return [{ type: 'band-left', band }]; }
+  band.members.push('me');
+  const ch = `${clan.id}/${band.id}`;
+  addChat(state, ch, { kind: 'system', text: `${state.player.name} joined ${band.name}.` }, now);
+  const greeter = clan.members.find((m) => band.members.includes(m.id) && !m.isPlayer);
+  if (greeter && !clan.remote) addChat(state, ch, { kind: 'msg', from: greeter, text: `Welcome to ${band.name}! We usually meet ${band.time} at ${spotById(band.spotId).name}.` }, now);
+  return [{ type: 'band-joined', band }];
+}
+
+export function createBand(state, { name, type, spotId, time = '18:00' }, now = worldNow(state)) {
+  const clan = playerClan(state);
+  if (!clan) throw new Error('Join a clan first');
+  const clean = (name || '').trim().slice(0, 32);
+  if (!clean) throw new Error('Name your band');
+  if (!ACTIVITIES[type] || !spotById(spotId)) throw new Error('Pick an activity and a home spot');
+  if ((clan.bands || []).some((b) => b.name.toLowerCase() === clean.toLowerCase())) throw new Error('That band already exists');
+  const band = makeBand(clan.id, [clean, type, spotId, time, `${clean}: ${ACTIVITIES[type].label}`], ['me']);
+  clan.bands = [...(clan.bands || []), band];
+  addChat(state, clan.id, { kind: 'system', text: `${state.player.name} started a new band: ${clean} (${ACTIVITIES[type].label}, ${spotById(spotId).name}).` }, now);
+  return [{ type: 'band-created', band }];
 }
 
 export function rsvp(state, id, now = worldNow(state)) {
@@ -712,7 +758,7 @@ export function attendGathering(state, id, now = worldNow(state)) {
   return [{ type: 'attended', g, spot }, ...checkBadges(state, now)];
 }
 
-export function hostGathering(state, { type, spotId, when = 'today', time = '18:00' }, now = worldNow(state)) {
+export function hostGathering(state, { type, spotId, when = 'today', time = '18:00', bandId = '' }, now = worldNow(state)) {
   const clan = playerClan(state);
   if (!clan) throw new Error('Join a clan first');
   const lvl = clanLevel(clan);
@@ -723,7 +769,8 @@ export function hostGathering(state, { type, spotId, when = 'today', time = '18:
   const rng = mulberry32(Date.now() >>> 0);
   const bots = clan.members.filter((m) => !m.isPlayer);
   const going = ['me', ...bots.filter(() => rng() < 0.5).map((m) => m.id)];
-  const g = { id: 'g' + Math.random().toString(36).slice(2, 9), clanId: clan.id, title: `${ACTIVITIES[type].label} at ${spot.name}`, type, spotId, day, time, host: state.player.name, going, rsvp: true, attended: false };
+  const band = bandId ? (clan.bands || []).find((b) => b.id === bandId) : null;
+  const g = { id: 'g' + Math.random().toString(36).slice(2, 9), clanId: clan.id, bandId: band?.id || null, title: band ? `${band.name}: ${ACTIVITIES[type].label}` : `${ACTIVITIES[type].label} at ${spot.name}`, type, spotId, day, time, host: state.player.name, going, rsvp: true, attended: false };
   state.gatherings.push(g);
   state.gatherings.sort((a, b) => (a.day + a.time < b.day + b.time ? -1 : 1));
   addChat(state, clan.id, { kind: 'rally', from: clan.members.find((m) => m.isPlayer), text: `📍 New gathering: ${g.title}, ${fmtGDay(day, now)} ${time}. Who's in?` }, now);
@@ -814,7 +861,7 @@ function claimTrials(state, now) {
 
 // ---------- chat ----------
 
-function addChat(state, clanId, msg, now) {
+export function addChat(state, clanId, msg, now) {
   const list = (state.chat[clanId] = state.chat[clanId] || []);
   const from = msg.from ? { id: msg.from.id, name: msg.from.name, aspect: msg.from.aspect, isPlayer: !!msg.from.isPlayer } : null;
   const ts = Math.max(new Date(now).getTime(), (list[list.length - 1]?.ts || 0) + 1000);
@@ -826,6 +873,7 @@ function addChat(state, clanId, msg, now) {
 const fill = (t, vars) => t.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? '');
 
 function botReactions(state, clan, msg, now) {
+  if (clan.remote) return;
   const bots = clan.members.filter((m) => !m.isPlayer);
   if (!bots.length) return;
   const rng = mulberry32(msg.ts >>> 0);
@@ -841,18 +889,21 @@ function seedChat(state, clan, now) {
     .forEach((b, i) => addChat(state, clan.id, { kind: 'msg', from: b, text: CHAT.banter[(i + Math.floor(rng() * 5)) % CHAT.banter.length] }, t0 + i * 600000));
 }
 
-export function postMessage(state, text, now = worldNow(state)) {
+export function postMessage(state, text, now = worldNow(state), channel = null) {
   const clan = playerClan(state);
   const clean = (text || '').trim().slice(0, 280);
   if (!clan || !clean) return [];
-  addChat(state, clan.id, { kind: 'msg', from: clan.members.find((m) => m.isPlayer), text: clean }, now);
-  const bots = clan.members.filter((m) => !m.isPlayer);
+  const ch = channel || clan.id;
+  const band = ch.includes('/') ? (clan.bands || []).find((b) => `${clan.id}/${b.id}` === ch) : null;
+  const msg = addChat(state, ch, { kind: 'msg', from: clan.members.find((m) => m.isPlayer), text: clean }, now);
+  if (clan.remote) return [{ type: 'sent', channel: ch, msg }];
+  const bots = clan.members.filter((m) => !m.isPlayer && (!band || band.members.includes(m.id)));
   if (!bots.length) return [];
   const rng = mulberry32((Date.now() ^ clean.length) >>> 0);
   const lower = clean.toLowerCase();
   const key = ['vigil', 'gym', 'hike', 'run', 'walk', 'rain', 'tired'].find((k) => lower.includes(k));
-  addChat(state, clan.id, { kind: 'msg', from: bots[Math.floor(rng() * bots.length)], text: key ? CHAT.reply[key] : pick(CHAT.reply.default, rng) }, now);
-  return [];
+  addChat(state, ch, { kind: 'msg', from: bots[Math.floor(rng() * bots.length)], text: key ? CHAT.reply[key] : pick(CHAT.reply.default, rng) }, now);
+  return [{ type: 'sent', channel: ch, msg }];
 }
 
 export function rally(state, now = worldNow(state)) {
@@ -862,7 +913,7 @@ export function rally(state, now = worldNow(state)) {
   state.rallyDay = dayKey(now);
   addChat(state, clan.id, { kind: 'rally', from: clan.members.find((m) => m.isPlayer), text: '🔥 Rally! Who\'s moving today? Let\'s get everyone Bonded.' }, now);
   const rng = mulberry32(Date.now() >>> 0);
-  clan.members.filter((m) => !m.isPlayer).sort((a, b) => a.propensity - b.propensity).slice(0, 2)
+  if (!clan.remote) clan.members.filter((m) => !m.isPlayer).sort((a, b) => a.propensity - b.propensity).slice(0, 2)
     .forEach((b) => addChat(state, clan.id, { kind: 'msg', from: b, text: pick(CHAT.rallyReply, rng) }, now));
   return [{ type: 'rally' }];
 }
@@ -891,6 +942,7 @@ const ASPECT_ACTS = Object.fromEntries(ASPECT_IDS.map((a) => [a, Object.keys(ACT
 
 function botsActOnDay(state, clan, date, rng, { quiet = false } = {}) {
   const events = [];
+  if (clan.remote) return events;
   const mine = clan.id === state.clanId;
   const rallied = mine && state.rallyDay === dayKey(date);
   const all = Object.keys(ACTIVITIES);
@@ -1008,6 +1060,15 @@ export function spiritWhisper(state, now = worldNow(state)) {
   if (st.awakened) return `${opener} "We are awakened. Our vigils burn brighter. Use the Seals to claim new ground."`;
   if (!st.bondOk) return `${opener} "${st.bondNeeded - st.bonded.length} more kin must be Bonded before we can awaken. Rally them."`;
   return `${opener} "The gauge needs ${r1(Math.max(0, st.target - st.charged) / KM_PER_MI)} more miles. Then ${st.power.name} is ours."`;
+}
+
+// ---------- backend helpers ----------
+
+// Rebuild a clan's weekly gauge from activity rows (used when a real backend is connected).
+export function rebuildWeek(clan, rows, now = new Date()) {
+  clan.week = emptyWeek(weekStart(now));
+  for (const r of rows) record(clan, r.memberId, r.aspect, Number(r.trailKm) || 0, r.type, new Date(r.date));
+  clan.xp = Math.max(0, clan.xp - rows.reduce((s, r) => s + (Number(r.trailKm) || 0), 0)); // record() added xp; server xp is authoritative
 }
 
 // ---------- utils ----------

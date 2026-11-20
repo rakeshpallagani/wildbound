@@ -22,6 +22,7 @@ export function createTracker({ onFix = () => {}, onPoints = () => {}, onError =
   let startedAt = 0;
   let active = false;
   let mode = 'demo';
+  let lastErr = Date.now();
 
   function push(lat, lon, accuracy = 5) {
     if (accuracy > 60) return; // ignore poor fixes
@@ -44,7 +45,11 @@ export function createTracker({ onFix = () => {}, onPoints = () => {}, onError =
       mode = 'gps';
       watchId = navigator.geolocation.watchPosition(
         (p) => { onFix({ lat: p.coords.latitude, lon: p.coords.longitude, accuracy: p.coords.accuracy }); if (active) push(p.coords.latitude, p.coords.longitude, p.coords.accuracy); },
-        (e) => onError(e.code === 1 ? 'Location permission was denied.' : 'Lost the GPS signal.'),
+        (e) => {
+          // Brief signal gaps are normal outdoors; only surface permission problems, and others at most once a minute.
+          if (e.code === 1) onError('Location permission was denied. Turn it on in your phone settings to track movement.');
+          else if (Date.now() - lastErr > 60000) { lastErr = Date.now(); onError('GPS signal is weak. Keep moving, it will catch up.'); }
+        },
         { enableHighAccuracy: true, maximumAge: 2000 },
       );
     },

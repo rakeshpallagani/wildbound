@@ -82,21 +82,21 @@ export const AWAKENING = {
   bondShare: 0.6,
   convergenceShare: 0.35,
   tiers: [
-    { id: 'kindled', name: 'Kindled', at: 1 / 3, reward: 25, desc: '+25 essence each' },
-    { id: 'roused', name: 'Roused', at: 2 / 3, reward: 50, desc: '+50 essence each' },
-    { id: 'awakened', name: 'Awakened', at: 1, reward: 150, desc: 'Power for 2 weeks, 2 Vigil Seals, +150 essence, +100 ✦ each' },
+    { id: 'kindled', name: 'Kindled', at: 1 / 3, reward: 25, desc: '+25 XP each' },
+    { id: 'roused', name: 'Roused', at: 2 / 3, reward: 50, desc: '+50 XP each' },
+    { id: 'awakened', name: 'Awakened', at: 1, reward: 150, desc: 'Power for 2 weeks, 2 Vigil Seals, +150 XP, +100 ✦ each' },
   ],
   seals: 2,
   lumens: 100,
 };
 
 export const POWERS = {
-  ironroot:   { id: 'ironroot',   name: 'Ironbark',       icon: '🌳', effect: '+25% essence from gym, strength and climbing' },
+  ironroot:   { id: 'ironroot',   name: 'Ironbark',       icon: '🌳', effect: '+25% XP from gym, strength and climbing' },
   emberclaw:  { id: 'emberclaw',  name: 'Wildfire Rally', icon: '🔥', effect: 'Daily trial rewards are doubled' },
-  tidecaller: { id: 'tidecaller', name: 'Tidal Recovery', icon: '🌊', effect: 'One rest day won\'t break streaks; +25% essence from water and yoga' },
+  tidecaller: { id: 'tidecaller', name: 'Tidal Recovery', icon: '🌊', effect: 'One rest day won\'t break streaks; +25% XP from water and yoga' },
   galewing:   { id: 'galewing',   name: 'Tailwind',       icon: '🌬️', effect: '+25% trail distance on every activity' },
-  mistwalker: { id: 'mistwalker', name: 'Veilwalk',       icon: '🌫️', effect: '+25% essence from walks and hikes; vigil pledges count ×1.25' },
-  convergence: { id: 'convergence', name: 'Convergence',  icon: '✴️', effect: '+15% essence and distance on everything (no Aspect above 35%)' },
+  mistwalker: { id: 'mistwalker', name: 'Veilwalk',       icon: '🌫️', effect: '+25% XP from walks and hikes; vigil pledges count ×1.25' },
+  convergence: { id: 'convergence', name: 'Convergence',  icon: '✴️', effect: '+15% XP and distance on everything (no Aspect above 35%)' },
 };
 // Every awakened Power also empowers the clan's vigils: half decay and ×1.5 tribute.
 
@@ -125,13 +125,17 @@ export const SPOTS = [
   { id: 'fremont', name: 'Fremont Canal', lat: 47.6505, lon: -122.3500 },
   { id: 'seward-park', name: 'Seward Park', lat: 47.5520, lon: -122.2575 },
 ];
-export const GATHERING_TEMPLATES = {
-  ironroot:   [['Outdoor strength circuit', 'strength', 'gas-works', '07:00'], ['Stairs & calisthenics', 'strength', 'volunteer-park', '18:00']],
-  emberclaw:  [['Pickup soccer', 'sport', 'magnuson', '10:00'], ['Bootcamp HIIT', 'hiit', 'cal-anderson', '18:30']],
-  tidecaller: [['Park yoga', 'yoga', 'volunteer-park', '08:30'], ['Cold-water swim', 'swim', 'alki', '07:30'], ['Sunset paddle', 'paddle', 'fremont', '18:00']],
-  galewing:   [['Green Lake loop run', 'run', 'green-lake', '07:00'], ['Burke-Gilman ride', 'cycle', 'fremont', '09:00']],
-  mistwalker: [['Discovery Park loop walk', 'walk', 'west-point', '09:30'], ['Viewpoints walk', 'walk', 'kerry-park', '17:30'], ['Old-growth forest walk', 'hike', 'seward-park', '10:00']],
+// Bands: smaller groups inside a clan, each with a focus, a home spot and its own chat channel.
+// [band name, activity type, spot, usual time, meetup title]
+export const BAND_TEMPLATES = {
+  ironroot:   [['Dawn Lifters', 'strength', 'gas-works', '07:00', 'Outdoor strength circuit'], ['Stair Climbers', 'strength', 'volunteer-park', '18:00', 'Stairs & calisthenics'], ['Wall Rats', 'climb', 'fremont', '18:30', 'Bouldering session']],
+  emberclaw:  [['Sunday Strikers', 'sport', 'magnuson', '10:00', 'Pickup soccer'], ['Sweat Club', 'hiit', 'cal-anderson', '18:30', 'Bootcamp HIIT'], ['Night Movers', 'dance', 'cal-anderson', '20:00', 'Outdoor dance session']],
+  tidecaller: [['Polar Plungers', 'swim', 'alki', '07:30', 'Cold-water swim'], ['Flow Circle', 'yoga', 'volunteer-park', '08:30', 'Park yoga'], ['Lake Union Paddlers', 'paddle', 'fremont', '18:00', 'Sunset paddle']],
+  galewing:   [['Green Lake Pacers', 'run', 'green-lake', '07:00', 'Green Lake loop run'], ['Burke Riders', 'cycle', 'fremont', '09:00', 'Burke-Gilman ride']],
+  mistwalker: [['Discovery Wanderers', 'walk', 'west-point', '09:30', 'Discovery Park loop walk'], ['Viewpoint Hunters', 'walk', 'kerry-park', '17:30', 'Viewpoints walk'], ['Forest Bathers', 'hike', 'seward-park', '10:00', 'Old-growth forest walk']],
 };
+// Every clan also has one cross-Aspect band, so mixed interests have a home.
+export const OPEN_BANDS = [['Weekend Hikers', 'hike', 'west-point', '09:00', 'Weekend hike'], ['Lunch Walkers', 'walk', 'kerry-park', '12:15', 'Lunch walk'], ['Rec League Crew', 'sport', 'magnuson', '19:00', 'Rec league scrimmage'], ['Stroller Squad', 'walk', 'green-lake', '10:00', 'Stroller loop'], ['Sunrise Stretch', 'yoga', 'alki', '07:00', 'Beach stretch']];
 export const GATHERING = { radiusM: 200, essence: 40, lumens: 15, clanXp: 20 };
 
 // ---------- Vigils: hold real Seattle landmarks ----------
@@ -152,40 +156,40 @@ export const VIGILS = [
     boon: { id: 'sky', text: '+10% trail distance for the whole clan' },
     lore: 'Built for the 1962 World\'s Fair (the Century 21 Exposition), the 605-ft tower was the tallest structure west of the Mississippi when it opened.' },
   { id: 'pike-place', name: 'Pike Place Market', vigil: 'Market Hearth', lat: 47.6097, lon: -122.3422, yield: 35,
-    boon: { id: 'market', text: 'Daily trials pay +10 extra essence' },
+    boon: { id: 'market', text: 'Daily trials pay +10 extra XP' },
     lore: 'Opened in 1907, it is one of the oldest continuously operating public farmers\' markets in the United States.' },
   { id: 'gas-works', name: 'Gas Works Park', vigil: 'Iron Forge', lat: 47.6456, lon: -122.3344, yield: 30,
-    boon: { id: 'forge', text: '+10% essence from gym, strength and climbing' },
+    boon: { id: 'forge', text: '+10% XP from gym, strength and climbing' },
     lore: 'A coal-gas plant ran here until 1956. When the park opened in 1975, its towers were kept as a monument to Seattle\'s industrial past.' },
   { id: 'kerry-park', name: 'Kerry Park', vigil: 'Overlook', lat: 47.6295, lon: -122.3599, yield: 25,
-    boon: { id: 'overlook', text: '+10% essence from walks and hikes' },
+    boon: { id: 'overlook', text: '+10% XP from walks and hikes' },
     lore: 'The classic Queen Anne viewpoint: skyline, Space Needle, Elliott Bay and, when "the mountain is out", Rainier.' },
   { id: 'ballard-locks', name: 'Ballard Locks', vigil: 'Tidegate', lat: 47.6654, lon: -122.3972, yield: 30,
-    boon: { id: 'tidegate', text: '+10% essence from swim, paddle and yoga' },
+    boon: { id: 'tidegate', text: '+10% XP from swim, paddle and yoga' },
     lore: 'Opened in 1917, the Chittenden Locks connect Lake Washington and Lake Union to Puget Sound. Salmon climb the fish ladder in late summer.' },
   { id: 'west-point', name: 'West Point Lighthouse', vigil: 'Lantern Point', lat: 47.6619, lon: -122.4356, yield: 25,
     boon: { id: 'lantern', text: 'Streak shield: one rest day won\'t break a streak' },
     lore: 'At the tip of Discovery Park, Seattle\'s largest park (534 acres), the lighthouse has guided ships since 1881.' },
   { id: 'green-lake', name: 'Green Lake', vigil: 'Stillwater Ring', lat: 47.6800, lon: -122.3290, yield: 30,
-    boon: { id: 'stillwater', text: '+10% essence from running and cycling' },
+    boon: { id: 'stillwater', text: '+10% XP from running and cycling' },
     lore: 'A 2.8-mile loop around a lake left behind by retreating ice-age glaciers. It is one of the busiest running paths in the city.' },
   { id: 'fremont-troll', name: 'Fremont Troll', vigil: 'Troll\'s Bargain', lat: 47.6510, lon: -122.3473, yield: 20,
-    boon: { id: 'troll', text: 'Cheering kin pays double essence' },
+    boon: { id: 'troll', text: 'Cheering kin pays double XP' },
     lore: 'An 18-ft concrete troll has lurked under the Aurora Bridge since 1990, crushing a real Volkswagen Beetle in its hand.' },
   { id: 'lumen-field', name: 'Lumen Field', vigil: 'Arena of Echoes', lat: 47.5952, lon: -122.3316, yield: 35,
-    boon: { id: 'arena', text: '+10% essence from sport, HIIT and dance' },
+    boon: { id: 'arena', text: '+10% XP from sport, HIIT and dance' },
     lore: 'Opened in 2002. In January 2011, the crowd\'s roar during a famous Seahawks touchdown run registered on a nearby seismometer: the "Beast Quake".' },
   { id: 'volunteer-park', name: 'Volunteer Park', vigil: 'Watchtower', lat: 47.6304, lon: -122.3150, yield: 25,
-    boon: { id: 'watch', text: '+15 essence for every member each day' },
+    boon: { id: 'watch', text: '+15 XP for every member each day' },
     lore: 'Landscaped to an Olmsted Brothers plan. Its 1907 water tower has one of the best free views in the city.' },
   { id: 'seward-park', name: 'Seward Park', vigil: 'Elder Grove', lat: 47.5496, lon: -122.2560, yield: 45,
     boon: { id: 'grove', text: 'The richest tribute in the city' },
     lore: 'A peninsula in Lake Washington with one of Seattle\'s largest stands of old-growth forest, some trees centuries old.' },
   { id: 'golden-gardens', name: 'Golden Gardens', vigil: 'Sunset Pyre', lat: 47.6920, lon: -122.4030, yield: 25,
-    boon: { id: 'sunset', text: '+15% essence on Saturdays and Sundays' },
+    boon: { id: 'sunset', text: '+15% XP on Saturdays and Sundays' },
     lore: 'A beach on Shilshole Bay with sunsets over the Olympic Mountains and evening bonfires.' },
   { id: 'pioneer-square', name: 'Pioneer Square', vigil: 'Founders\' Ward', lat: 47.6015, lon: -122.3343, yield: 30,
-    boon: { id: 'founders', text: '+5% essence on everything' },
+    boon: { id: 'founders', text: '+5% XP on everything' },
     lore: 'Seattle\'s first downtown. After the Great Fire of 6 June 1889 the city rebuilt in brick and raised its streets, leaving the "Seattle Underground" below. The city is named for Si\'ahl, a leader of the Duwamish and Suquamish peoples.' },
 ];
 
@@ -314,7 +318,7 @@ export const CHAT = {
     walk: 'I\'m in for a walk. Gas Works at sunset?',
     gym: 'Gym counts as Ironroot energy, sport counts as Emberclaw. Both charge our gauge.',
     vigil: 'Let\'s bring our miles to the vigil. Every km pledged is 60 ward.',
-    rain: 'It\'s Seattle, rain is just extra essence 😄',
+    rain: 'It\'s Seattle, rain is just extra XP 😄',
     tired: 'Even 10 easy minutes counts toward Bonded. Small is fine.',
     default: ['Love that.', 'Ha, same.', 'Agreed!', 'Let\'s make it happen this week.', '🙌'],
   },

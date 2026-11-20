@@ -571,3 +571,23 @@ select { font: inherit; color: var(--text); background: var(--bg); border: 1px s
   .trekbar { right: 10px; bottom: 10px; }
   .gps-pill { top: 96px; bottom: auto; left: 10px; right: auto; }
 }
+
+/* =================== v5: bands, channels, backend, you-pill =================== */
+.hud.tl { flex-direction: column; align-items: flex-start; }
+.you-pill { font-size: 12px; }
+.band-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.band-chip { font-size: 12px; padding: 4px 10px; border-radius: 999px; background: var(--bg); border: 1px solid var(--line); }
+.band-chip small { color: var(--muted); margin-left: 4px; }
+.bands { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 6px; }
+.bands li { display: flex; gap: 10px; align-items: center; padding: 9px 10px; border-radius: 12px; background: var(--bg); border: 1px solid var(--line); }
+.bands li.mine { border-color: var(--accent); }
+.bands li small { display: block; color: var(--muted); font-size: 12px; }
+.channels { display: flex; gap: 6px; overflow-x: auto; padding: 8px 16px; border-bottom: 1px solid var(--line); align-items: center; }
+.channels .chip { flex: none; }
+.chips.radius { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 10px; }
+.why { font-size: 13px; color: var(--muted); margin: 0 0 10px; }
+.why b { color: var(--text); }
+.backend { display: grid; gap: 8px; }
+.backend .stack { gap: 6px; }
+code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: var(--bg); padding: 1px 5px; border-radius: 5px; }
+@media (max-width: 560px) { .you-pill { font-size: 11px; } }
