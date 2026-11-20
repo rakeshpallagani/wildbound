@@ -5,7 +5,7 @@ import * as G from './engine.js';
 import * as store from './store.js';
 import { SOURCES, fetchRecent } from './sync.js';
 import { createMap3D } from './map3d.js';
-import { createTracker, locateOnce, gpsSupported } from './tracker.js';
+import { createTracker, locateOnce, gpsSupported, locationPermission } from './tracker.js';
 import { createGoogle3D } from './gmaps.js';
 import { createBackend, readConfig, saveConfig, mergeWorld, remoteMsg } from './backend.js';
 
@@ -20,6 +20,7 @@ let draft = freshDraft();
 let chatChannel = null;
 let radiusMi = 3;
 let autoGpsTried = false;
+let gpsIssue = null; // { code, message } from the last failed location attempt
 const backend = createBackend({ onChange: onBackendChange });
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -325,6 +326,7 @@ function mapView() {
     </div>
     <div class="hud bl trekbar" id="trekbar"></div>
   </section>
+  <section class="card loc-help" id="loc-help" hidden></section>
   <section class="card sel-panel" id="sel-panel"></section>
   <section class="card"><div id="layer-list"></div></section>`;
 }
@@ -338,15 +340,47 @@ function nearbyGatherings() {
   return upcoming().filter((g) => metersTo(G.spotById(g.spotId)) <= lim);
 }
 async function startGps(quiet = false) {
+  const btn = $('#loc-on');
+  if (btn) { btn.disabled = true; btn.textContent = 'Finding you…'; }
   try {
     const p = await locateOnce();
+    gpsIssue = null;
     state.player.pos = { lat: p.lat, lon: p.lon };
     tracker.follow(); map?.setMode('gps'); map?.setPlayer(p.lat, p.lon, { jump: true }); map?.followMe(); gmap?.setPlayer(p.lat, p.lon);
     toast(`📍 GPS live (±${Math.round(p.accuracy)} m). Your avatar moves with you.`, 'good');
     save(); render();
   } catch (err) {
-    if (!quiet) toast(`${esc(err.message)} Using Demo GPS: tap the map to walk. Install the app from its web address to use your real position.`, 'bad');
+    gpsIssue = { code: err.code, message: err.message, perm: await locationPermission() };
+    if (!quiet) toast(`${esc(err.message)} See the steps under the map.`, 'bad');
+    renderLocHelp();
   }
+}
+const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const inPreview = () => { try { return window.top !== window; } catch { return true; } };
+function renderLocHelp() {
+  const el = $('#loc-help');
+  if (!el) return;
+  if (tracker.mode === 'gps') { el.hidden = true; return; }
+  el.hidden = false;
+  const blocked = gpsIssue?.code === 1 || gpsIssue?.perm === 'denied';
+  const steps = inPreview()
+    ? '<p class="small">This preview can\'t use your location. Open <b>rakeshpallagani.github.io/wildbound</b> in your phone\'s browser or installed app instead.</p>'
+    : isIOS()
+      ? `<ol class="small loc-steps">
+          <li><b>Settings → Privacy &amp; Security → Location Services</b>: turn it <b>on</b>.</li>
+          <li>In that same list, tap <b>Safari Websites</b> → <b>While Using the App</b> (home-screen apps use this setting too).</li>
+          <li><b>Settings → Apps → Safari → Location</b> → <b>Ask</b> or <b>Allow</b>.</li>
+          ${blocked ? '<li>If you tapped "Don\'t Allow" before: remove Wildbound from the home screen, add it again from Safari, and tap <b>Allow</b>.</li>' : ''}
+          <li>Come back here and tap <b>Turn on location</b>.</li></ol>`
+      : `<ol class="small loc-steps">
+          <li>Turn on your phone's <b>Location</b> (quick settings).</li>
+          <li>${blocked ? 'Location is blocked for this site: tap the ⓘ or 🔒 next to the address (or long-press the app icon → App info → Permissions) and allow <b>Location</b>.' : 'When asked, choose <b>Allow</b> (While using the app).'}</li>
+          <li>Tap <b>Turn on location</b> again.</li></ol>`;
+  el.innerHTML = `<div class="card-head"><div><h2>📍 ${gpsIssue ? 'Location isn\'t on yet' : 'Use your real location'}</h2>
+      <p class="muted small">${gpsIssue ? esc(gpsIssue.message) : 'Your avatar walks with you, treks record your route, and Activities shows what\'s near you.'} Until then, Demo GPS is on: tap the map to walk.</p></div></div>
+    <div class="row gap"><button class="btn primary" id="loc-on">Turn on location</button></div>
+    ${gpsIssue || inPreview() ? steps : ''}`;
+  $('#loc-on').addEventListener('click', () => startGps());
 }
 function updateTrekBar() {
   const el = $('#trekbar');
@@ -577,6 +611,7 @@ bind.map = async function () {
   updateTrekBar();
   renderPanel();
   renderList();
+  renderLocHelp();
 };
 
 // ---------- LOG ----------

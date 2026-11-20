@@ -591,3 +591,8 @@ select { font: inherit; color: var(--text); background: var(--bg); border: 1px s
 .backend .stack { gap: 6px; }
 code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: var(--bg); padding: 1px 5px; border-radius: 5px; }
 @media (max-width: 560px) { .you-pill { font-size: 11px; } }
+
+/* location help */
+.loc-help { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.loc-help h2 { margin: 0; }
+.loc-steps { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; }

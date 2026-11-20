@@ -4,16 +4,29 @@ import { haversineM, pathKm } from './geo.js';
 
 export function gpsSupported() { return typeof navigator !== 'undefined' && 'geolocation' in navigator; }
 
-// One-off position request. Resolves {lat, lon, accuracy} or rejects with a readable message.
-export function locateOnce(timeout = 9000) {
-  return new Promise((resolve, reject) => {
-    if (!gpsSupported()) { reject(new Error('This browser has no location support.')); return; }
+// Current permission state if the browser can tell us: 'granted' | 'denied' | 'prompt' | 'unknown'.
+export async function locationPermission() {
+  try { const r = await navigator.permissions?.query({ name: 'geolocation' }); return r?.state || 'unknown'; } catch { return 'unknown'; }
+}
+
+// One-off position request. Tries a precise fix first, then falls back to a quicker, coarser one
+// (indoors, iPhones often need longer than a few seconds for GPS). Rejects with { code, message }.
+export function locateOnce() {
+  const once = (opts) => new Promise((resolve, reject) => {
     navigator.geolocation.getCurrentPosition(
       (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude, accuracy: p.coords.accuracy }),
-      (e) => reject(new Error(e.code === 1 ? 'Location permission was denied (or blocked by this viewer).' : 'Couldn\'t get a location fix.')),
-      { enableHighAccuracy: true, timeout, maximumAge: 5000 },
-    );
+      (e) => reject(e), opts);
   });
+  if (!gpsSupported()) return Promise.reject(Object.assign(new Error('This browser has no location support.'), { code: 0 }));
+  return once({ enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 })
+    .catch((e) => (e.code === 1 ? Promise.reject(e) : once({ enableHighAccuracy: false, timeout: 20000, maximumAge: 120000 })))
+    .catch((e) => {
+      const msg = e.code === 1 ? 'Location is blocked for Wildbound.'
+        : e.code === 2 ? 'Your phone couldn\'t determine a position (check Location Services is on).'
+        : e.code === 3 ? 'Timed out waiting for a location fix. Try near a window or outside.'
+        : e.message || 'Couldn\'t get your location.';
+      return Promise.reject(Object.assign(new Error(msg), { code: e.code ?? 0 }));
+    });
 }
 
 export function createTracker({ onFix = () => {}, onPoints = () => {}, onError = () => {} } = {}) {
